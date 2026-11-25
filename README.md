@@ -1,6 +1,6 @@
-# Docker Watchdog 1.2.1
+# Docker Watchdog 1.2.2
 
-Linux Debian/Ubuntu, existing Docker Engine and Compose V2, root-managed trusted Compose files. Install `sudo apt install ./docker-watchdog_1.2.1-1_all.deb`. If migrating from a manual install remove its overriding `/etc/systemd/system/docker-watchdog.service` after checking it, then daemon-reload and restart. `systemctl status docker-watchdog`; `journalctl -u docker-watchdog -f`.
+Linux Debian/Ubuntu, existing Docker Engine and Compose V2, root-managed trusted Compose files. Install `sudo apt install ./docker-watchdog_1.2.2-1_all.deb`. If migrating from a manual install remove its overriding `/etc/systemd/system/docker-watchdog.service` after checking it, then daemon-reload and restart. `systemctl status docker-watchdog`; `journalctl -u docker-watchdog -f`.
 
 Add labels to the single service exposing a TCP port:
 
@@ -39,3 +39,7 @@ Docker integration tests: `bash tests/integration.sh` on an isolated Docker host
 ## 1.2.1 CLI and observability
 
 `--status` and `--history PROJECT` now default to human-readable tables with local ISO-8601 dates and UTC offsets. Use `--status --json` for enriched JSON lines, `--history PROJECT --json` for dated JSON, or `--raw` with either command for the old raw schema. `--list` preserves its previous JSON-lines output; `--list --table` renders a table and `--list --json` includes effective settings. Effective settings reflect the CLI configuration file and current labels; restart the daemon after changing the file. Pending recovery without containers uses saved recovery options. Status is a snapshot of saved observations, not a live HTTP probe. A dash means no timestamp/value. Summary categories are exclusive for discovered projects; workers_active is a separate count. Docker Events logs distinguish process startup from confirmation by the first received event. Configuration and state formats remain unchanged.
+
+## 1.2.2 manual page
+
+Run `man docker-watchdog` after installation (install `man-db` if absent). The English manual covers CLI, configuration, labels, recovery, maintenance, diagnostics, metrics and security. The generated roff page is included in source, so building the package requires no Pandoc. To regenerate it after editing, run `pandoc -f markdown-smart -s -t man docs/docker-watchdog.1.md -o docs/docker-watchdog.1`. No recovery logic changed in this release.

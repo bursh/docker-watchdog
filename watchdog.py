@@ -26,7 +26,7 @@ DEFAULTS = dict(interval=60, failures=3, cooldown=120, max_restarts=3,
                 log_success=True, log_level='INFO', summary_interval=600,
                 docker_events=True, webhook_url='', metrics_port=0,
                 pre_hook='', post_hook='', hook_timeout=30)
-VERSION = '1.2.1'
+VERSION = '1.2.2'
 MODES = {'restart', 'down-up', 'force-recreate'}
 LOG = logging.getLogger('watchdog')
 

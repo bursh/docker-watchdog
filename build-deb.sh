@@ -11,10 +11,13 @@ install -m 644 watchdog.conf "$root/etc/docker-watchdog/watchdog.conf"
 install -m 644 docker-watchdog.service "$root/lib/systemd/system/"
 install -m 644 README.md "$root/usr/share/doc/docker-watchdog/"
 install -m 644 watchdog.conf "$root/usr/share/doc/docker-watchdog/watchdog.conf.example"
+install -d "$root/usr/share/man/man1"
+gzip -n -9 -c docs/docker-watchdog.1 > "$root/usr/share/man/man1/docker-watchdog.1.gz"
+chmod 644 "$root/usr/share/man/man1/docker-watchdog.1.gz"
 for f in postinst prerm postrm; do install -m 755 "packaging/$f" "$root/DEBIAN/$f"; done
 cat > "$root/DEBIAN/control" <<'CONTROL'
 Package: docker-watchdog
-Version: 1.2.1-1
+Version: 1.2.2-1
 Section: admin
 Priority: optional
 Architecture: all
@@ -24,4 +27,4 @@ Description: Central Docker Compose watchdog with persistent recovery state
  Requires an existing Docker Engine and Docker Compose V2 installation.
 CONTROL
 printf '%s\n' /etc/docker-watchdog/watchdog.conf > "$root/DEBIAN/conffiles"
-dpkg-deb --root-owner-group --build "$root" "$out/docker-watchdog_1.2.1-1_all.deb"
+dpkg-deb --root-owner-group --build "$root" "$out/docker-watchdog_1.2.2-1_all.deb"
