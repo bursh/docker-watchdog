@@ -12,7 +12,8 @@ class WatchdogTests(unittest.TestCase):
         self.dir = self.tmp.name
         Path(self.dir, 'compose.yml').touch()
         self.store = w.Store(self.dir)
-        self.cfg = w.options({'interval': 1, 'cooldown': 0})
+        self.cfg = w.options({'interval': 1, 'cooldown': 0, 'startup_grace': 0})
+        fresh = patch('watchdog.fresh', return_value=True); fresh.start(); self.addCleanup(fresh.stop)
         self.c = {'Config': {'Labels': {'com.docker.compose.project.working_dir': self.dir,
             'com.docker.compose.project.config_files': 'compose.yml', 'com.docker.compose.service': 'web'}},
             'State': {'Running': True}, 'HostConfig': {'PortBindings': {'80/tcp': [{'HostPort': '0'}]}},
@@ -64,3 +65,40 @@ class WatchdogTests(unittest.TestCase):
         self.cfg.update(mode='down-up',failures=1)
         cmd.side_effect=[subprocess.CalledProcessError(1,'down'),None]
         self.tick(); self.assertEqual(cmd.call_count,2); self.assertEqual(self.store.load('p').recovery,'')
+
+    @patch('watchdog.run_command')
+    @patch('watchdog.healthy', return_value=False)
+    def test_unlimited(self, health, cmd):
+        self.cfg.update(failures=1,max_restarts=0)
+        for _ in range(6): self.tick()
+        self.assertEqual(cmd.call_count,6)
+        self.assertEqual(w.options({'max_restarts':'0'})['max_restarts'],0)
+
+    @patch('watchdog.run_command')
+    @patch('watchdog.healthy', return_value=False)
+    def test_pause(self, health, cmd):
+        self.cfg['failures']=1
+        self.store.pause_path('p').write_text('0')
+        self.tick(); cmd.assert_not_called()
+        self.store.pause_path('p').unlink()
+        self.tick(); cmd.assert_called_once()
+
+    @patch('watchdog.run_command')
+    @patch('watchdog.healthy', return_value=False)
+    def test_removed(self, health, cmd):
+        self.cfg['failures']=1
+        with patch('watchdog.fresh', return_value=False): self.tick()
+        cmd.assert_not_called()
+
+    @patch('watchdog.run_command')
+    @patch('watchdog.healthy', return_value=False)
+    def test_escalation(self, health, cmd):
+        self.cfg.update(failures=1,max_restarts=0,recovery='restart,force-recreate,down-up')
+        for _ in range(3): self.tick()
+        self.assertEqual([call.args[0][-1] for call in cmd.call_args_list],['restart','--force-recreate','down','-d'])
+
+    def test_duration(self):
+        self.assertEqual(w.duration('30m'),1800)
+
+    def test_commented_config(self):
+        self.assertEqual(w.load_config(Path(__file__).with_name('watchdog.conf')),w.DEFAULTS)

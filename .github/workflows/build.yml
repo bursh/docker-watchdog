@@ -6,6 +6,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest -v
+      - run: bash tests/integration.sh
       - run: bash build-deb.sh
       - run: dpkg-deb --info dist/*.deb && dpkg-deb --contents dist/*.deb
       - uses: actions/upload-artifact@v4

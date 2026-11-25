@@ -12,12 +12,20 @@ import logging
 import subprocess
 import time
 import urllib.request
+import threading
+import http.server
+import contextlib
+import datetime
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 DEFAULTS = dict(interval=60, failures=3, cooldown=120, max_restarts=3,
                 window=3600, http_timeout=5, command_timeout=180, workers=32,
-                mode='restart', dry_run=False)
+                mode='restart', dry_run=False, startup_grace=60, recovery='',
+                log_success=True, log_level='INFO', summary_interval=600,
+                docker_events=True, webhook_url='', metrics_port=0,
+                pre_hook='', post_hook='', hook_timeout=30)
 MODES = {'restart', 'down-up', 'force-recreate'}
 LOG = logging.getLogger('watchdog')
 
@@ -30,13 +38,23 @@ def options(raw):
         if key == 'mode':
             if value not in MODES:
                 raise ValueError(f'invalid mode: {value}')
-        elif key == 'dry_run':
+        elif key == 'recovery':
+            if value and any(m not in MODES for m in value.split(',')):
+                raise ValueError('invalid recovery sequence')
+        elif key == 'log_level':
+            value = value.upper()
+            if value not in ('DEBUG', 'INFO', 'WARNING', 'ERROR'): raise ValueError('invalid log_level')
+        elif key in ('webhook_url', 'pre_hook', 'post_hook'):
+            if key == 'webhook_url' and value and not value.startswith('https://'): raise ValueError('webhook requires HTTPS')
+            if key.endswith('_hook') and value and not os.path.isabs(value): raise ValueError('hook must be absolute path')
+        elif key in ('dry_run', 'log_success', 'docker_events'):
             if str(value).lower() not in ('true', 'false', '1', '0', 'yes', 'no'):
                 raise ValueError('invalid dry_run')
             value = str(value).lower() in ('true', '1', 'yes')
         else:
             value = int(value)
-            if value < (0 if key == 'cooldown' else 1):
+            if key == 'metrics_port' and value > 65535: raise ValueError('invalid metrics port')
+            if value < (0 if key in ('cooldown', 'max_restarts', 'startup_grace', 'summary_interval', 'metrics_port') else 1):
                 raise ValueError(f'invalid {key}: {value}')
         result[key] = value
     return result
@@ -52,13 +70,15 @@ def load_config(path):
 
 def project_options(containers, config):
     keys = ('failures', 'cooldown', 'max_restarts', 'window', 'http_timeout',
-            'command_timeout', 'mode', 'interval')
+            'command_timeout', 'mode', 'interval', 'startup_grace', 'recovery')
     overrides = []
     for c in containers:
         labels = c['Config']['Labels']
         overrides.append({k: labels['watchdog.' + k] for k in keys if 'watchdog.' + k in labels})
     if any(v != overrides[0] for v in overrides):
         raise ValueError('conflicting watchdog labels')
+    if 'mode' in overrides[0] and 'recovery' not in overrides[0]:
+        overrides[0]['recovery'] = ''
     return options({**config, **overrides[0]})
 
 
@@ -75,6 +95,14 @@ class State:
     recovery_cmd: list = field(default_factory=list)
     recovery_options: dict = field(default_factory=dict)
     next_check: float = 0
+    history: list = field(default_factory=list)
+    escalation: int = 0
+    blocked: bool = False
+    status: str = "unknown"
+    last_check: float = 0
+    last_detail: str = ""
+    generation: str = ""
+    grace_until: float = 0
 
 
 def discover():
@@ -127,7 +155,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+PROBE = threading.local()
+
 def healthy(containers, scheme, path, host, endpoints, timeout=5):
+    PROBE.detail = "container stopped or no endpoint"
+    started = time.monotonic()
     if not any(c['State']['Running'] for c in containers):
         return False
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -136,13 +168,15 @@ def healthy(containers, scheme, path, host, endpoints, timeout=5):
         req = urllib.request.Request(f'{scheme}://{address}:{port}{path}', headers={'Host': host} if host else {})
         try:
             with opener.open(req, timeout=timeout) as response:
+                PROBE.detail = f"HTTP {response.status} endpoint={address}:{port} duration={time.monotonic()-started:.3f}s"
                 if 200 <= response.status < 400:
                     return True
         except urllib.error.HTTPError as e:
+            PROBE.detail = f"HTTP {e.code} endpoint={address}:{port} duration={time.monotonic()-started:.3f}s"
             if 300 <= e.code < 400:
                 return True
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as e:
+            PROBE.detail = f"{type(e).__name__}: {e} endpoint={address}:{port} duration={time.monotonic()-started:.3f}s"
     return False
 
 
@@ -189,6 +223,30 @@ class Store:
             if os.path.exists(name):
                 os.unlink(name)
 
+    @contextlib.contextmanager
+    def guard(self, project, blocking=True):
+        with open(str(self.path(project)) + '.lock', 'a') as f:
+            fcntl.flock(f, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            yield
+
+    def pause_path(self, project):
+        return self.path(project).with_suffix('.pause')
+
+    def paused(self, project):
+        try:
+            until = float(self.pause_path(project).read_text())
+            return until == 0 or until > time.time()
+        except FileNotFoundError:
+            return False
+
+    def all_states(self):
+        for path in self.directory.glob('*.json'):
+            try:
+                d = json.loads(path.read_text())
+                yield d['project'], self.load(d['project'])
+            except (OSError, ValueError, TypeError, KeyError):
+                LOG.exception('Invalid state file %s', path)
+
     def recovering(self):
         for path in self.directory.glob('*.json'):
             with path.open() as f:
@@ -216,6 +274,47 @@ def run_command(cmd, timeout):
     subprocess.run(cmd, check=True, timeout=timeout)
 
 
+def limited(project, state, store, cfg):
+    limit = cfg['max_restarts']
+    blocked = bool(limit and len(state.restarts) >= limit)
+    if blocked and not state.blocked:
+        LOG.error('%s: restart limit reached (%s/%s); next recovery allowed at %s', project,
+                  len(state.restarts), limit, datetime.datetime.fromtimestamp(
+                      state.restarts[len(state.restarts)-limit] + cfg['window']).isoformat())
+    if state.blocked and not blocked:
+        LOG.info('%s: recovery limit released', project)
+    state.blocked = blocked
+    store.save(project, state)
+    return blocked
+
+
+def record(state, mode, result):
+    state.history.append(dict(time=time.time(), mode=mode, result=result))
+    state.history = state.history[-500:]
+
+
+def notify(project, cfg, event, mode):
+    if not cfg['webhook_url'] or cfg['dry_run']:
+        return
+    try:
+        body = json.dumps(dict(project=project, event=event, mode=mode)).encode()
+        req = urllib.request.Request(cfg['webhook_url'], data=body,
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=5): pass
+    except Exception as e:
+        LOG.warning('%s: webhook failed (%s)', project, type(e).__name__)
+
+
+def hook(project, cfg, name, mode, result=''):
+    if cfg[name] and not cfg['dry_run']:
+        subprocess.run([cfg[name], project, mode, result], check=True, timeout=cfg['hook_timeout'])
+
+
+def fresh(project, containers):
+    current = discover().get(project, [])
+    return bool(current) and {c.get('Id') for c in current} == {c.get('Id') for c in containers}
+
+
 def recover(project, state, store, cfg):
     # A durable intent is written before down; if the daemon or host dies,
     # up is retried even if all labelled containers have disappeared.
@@ -226,8 +325,7 @@ def recover(project, state, store, cfg):
     if now < state.cooldown:
         return
     state.restarts = deque(t for t in state.restarts if now - t < cfg['window'])
-    if len(state.restarts) >= cfg['max_restarts']:
-        LOG.error('%s: pending recovery limited; retry after window', project)
+    if limited(project, state, store, cfg):
         return
     state.restarts.append(now)
     store.save(project, state)
@@ -235,25 +333,44 @@ def recover(project, state, store, cfg):
         run_command(state.recovery_cmd, cfg['command_timeout'])
         state.recovery = ''
         state.recovery_cmd = []
+        record(state, 'pending-up', 'completed')
         LOG.info('%s: pending up completed', project)
     except (OSError, subprocess.SubprocessError):
+        record(state, 'pending-up', 'failed')
         LOG.exception('%s: pending up failed', project)
     finally:
         state.cooldown = time.time() + cfg['cooldown']
         store.save(project, state)
 
 
-def check(project, containers, store, config):
+def check(project, containers, store, config, manual_mode=None):
+    with store.guard(project):
+        return check_locked(project, containers, store, config, manual_mode)
+
+def check_locked(project, containers, store, config, manual_mode=None):
     state = store.load(project)
     cfg = project_options(containers, config) if containers else config
     now = time.time()
+    if store.paused(project):
+        return
     if state.recovery:
         cfg = {**cfg, **state.recovery_options, 'dry_run': config['dry_run']}
+        if containers: cfg.update(project_options(containers, config))
         recover(project, state, store, cfg)
         return
-    if not containers or now < max(state.cooldown, state.next_check):
+    if not containers or (not manual_mode and now < max(state.cooldown, state.next_check)):
         return
     state.next_check = now + cfg['interval']
+    generation = ','.join(sorted(c.get('Id', '') + ':' + c['State'].get('StartedAt', '') for c in containers))
+    if generation != state.generation:
+        state.generation = generation
+        state.grace_until = now + cfg['startup_grace']
+        state.failures = 0
+        store.save(project, state)
+    if not manual_mode and now < state.grace_until and any(c['State']['Running'] for c in containers):
+        state.next_check = min(state.next_check, state.grace_until)
+        store.save(project, state)
+        return
     try:
         directory, files, scheme, path, host, endpoints = target(containers)
         if not Path(directory).is_dir() or not all(Path(directory, f).is_file() for f in files):
@@ -265,33 +382,54 @@ def check(project, containers, store, config):
         store.save(project, state)
         LOG.error('%s: configuration error: %s', project, exc)
         return
-    if healthy(containers, scheme, path, host, endpoints, cfg['http_timeout']):
+    if not manual_mode and healthy(containers, scheme, path, host, endpoints, cfg['http_timeout']):
         state.failures = 0
+        state.escalation = 0
+        state.last_check = time.time()
+        state.last_detail = getattr(PROBE, 'detail', '')
+        changed = state.status != 'healthy'
+        state.status = 'healthy'
         store.save(project, state)
-        LOG.info('%s: OK', project)
+        if cfg['log_success'] or changed: LOG.info('%s: OK %s', project, state.last_detail)
         return
-    state.failures = min(cfg['failures'], state.failures + 1)
-    LOG.warning('%s: FAIL %s/%s', project, state.failures, cfg['failures'])
+    state.failures = cfg['failures'] if manual_mode else min(cfg['failures'], state.failures + 1)
+    state.status = 'failed'
+    state.last_check = time.time()
+    state.last_detail = 'manual recovery' if manual_mode else getattr(PROBE, 'detail', '')
+    if not state.blocked: LOG.warning('%s: FAIL %s/%s %s', project, state.failures, cfg['failures'], state.last_detail)
     store.save(project, state)
     if state.failures < cfg['failures']:
         return
     state.restarts = deque(t for t in state.restarts if now - t < cfg['window'])
-    if len(state.restarts) >= cfg['max_restarts']:
-        LOG.error('%s: restart limit reached', project)
+    if limited(project, state, store, cfg):
         return
-    cmds = commands(compose_command(project, directory, files), cfg['mode'])
+    sequence = cfg['recovery'].split(',') if cfg['recovery'] else [cfg['mode']]
+    mode = manual_mode or sequence[min(state.escalation, len(sequence)-1)]
+    cmds = commands(compose_command(project, directory, files), mode)
     if cfg['dry_run']:
         LOG.warning('%s: dry-run: %s', project, cmds)
         return
-    state.restarts.append(now)
-    if cfg['mode'] == 'down-up':
+    if not fresh(project, containers):
+        LOG.warning('%s: recovery skipped: project changed or removed', project)
+        return
+    try:
+        hook(project, cfg, 'pre_hook', mode)
+    except (OSError, subprocess.SubprocessError):
+        LOG.exception('%s: pre-hook failed; recovery skipped', project)
+        return
+    if not fresh(project, containers):
+        return
+    state.restarts.append(time.time())
+    state.escalation += 1
+    record(state, mode, 'started')
+    if mode == 'down-up':
         state.recovery = 'up'
         state.recovery_cmd = cmds[1]
         state.recovery_options = {k: cfg[k] for k in ('window', 'max_restarts', 'command_timeout', 'cooldown')}
     store.save(project, state)
     try:
-        LOG.warning('%s: recovery mode=%s', project, cfg['mode'])
-        if cfg['mode'] == 'down-up':
+        LOG.warning('%s: recovery mode=%s', project, mode)
+        if mode == 'down-up':
             # Attempt up even when down errors or times out (partial teardown).
             try:
                 run_command(cmds[0], cfg['command_timeout'])
@@ -302,13 +440,57 @@ def check(project, containers, store, config):
             state.recovery_cmd = []
         else:
             run_command(cmds[0], cfg['command_timeout'])
+        record(state, mode, 'completed')
         LOG.info('%s: recovery completed', project)
+        notify(project, cfg, 'completed', mode)
     except (OSError, subprocess.SubprocessError):
+        record(state, mode, 'failed')
         LOG.exception('%s: recovery failed', project)
+        notify(project, cfg, 'failed', mode)
     finally:
+        try:
+            hook(project, cfg, 'post_hook', mode, state.history[-1]['result'])
+        except (OSError, subprocess.SubprocessError):
+            LOG.exception('%s: post-hook failed', project)
         state.failures = 0
         state.cooldown = time.time() + cfg['cooldown']
         store.save(project, state)
+
+
+def metrics_server(store, port):
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != '/metrics':
+                self.send_error(404); return
+            lines = ['# TYPE docker_watchdog_failures gauge', '# TYPE docker_watchdog_retained_restart_attempts gauge']
+            for project, state in store.all_states():
+                label = json.dumps(project)
+                lines.extend([f'docker_watchdog_failures{{project={label}}} {state.failures}',
+                              f'docker_watchdog_retained_restart_attempts{{project={label}}} {len(state.restarts)}',
+                              f'docker_watchdog_paused{{project={label}}} {int(store.paused(project))}',
+                              f'docker_watchdog_last_check_timestamp_seconds{{project={label}}} {state.last_check}'])
+            data = ('\n'.join(lines)+'\n').encode()
+            self.send_response(200); self.send_header('Content-Type','text/plain; version=0.0.4'); self.end_headers(); self.wfile.write(data)
+        def log_message(self, *args): pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+def event_listener(wake):
+    while True:
+        try:
+            with subprocess.Popen(['docker','events','--filter','type=container','--format','{{json .}}'], stdout=subprocess.PIPE, text=True) as proc:
+                for line in proc.stdout:
+                    wake.set()
+        except OSError:
+            LOG.warning('Docker events unavailable; polling continues')
+        time.sleep(5)
+
+
+def duration(value):
+    m = re.fullmatch(r'([1-9][0-9]*)([smhd]?)', value)
+    if not m: raise ValueError('duration must be e.g. 30m, 2h')
+    return int(m[1])*{'':1,'s':1,'m':60,'h':3600,'d':86400}[m[2]]
 
 
 def main():
@@ -318,11 +500,52 @@ def main():
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--once', action='store_true')
-    parser.add_argument('--version', action='version', version='1.1.0')
+    parser.add_argument('--version', action='version', version='1.2.0')
+    actions = parser.add_mutually_exclusive_group()
+    for action in ('pause','resume','history','reset-limit','recover'):
+        actions.add_argument('--'+action, metavar='PROJECT')
+    actions.add_argument('--status', action='store_true')
+    parser.add_argument('--duration')
+    parser.add_argument('--mode', choices=sorted(MODES))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
     config = load_config(args.config)
     config['dry_run'] = config['dry_run'] or args.dry_run
+    logging.getLogger().setLevel(config['log_level'])
+    admin = Store(args.state_dir) if any((args.pause,args.resume,args.history,args.reset_limit,args.recover,args.status)) else None
+    if admin:
+        project = args.pause or args.resume or args.history or args.reset_limit or args.recover
+        if args.status:
+            active = discover()
+            names = set(active) | {name for name, _ in admin.all_states()}
+            for name in sorted(names):
+                state = admin.load(name)
+                print(json.dumps(dict(vars(state), project=name, discovered=name in active, paused=admin.paused(name), restarts=list(state.restarts))))
+            return
+        if args.history:
+            state = admin.load(project)
+            print(json.dumps(dict(history=state.history, restart_timestamps=list(state.restarts)), indent=2)); return
+        if config['dry_run']:
+            parser.error('administrative mutation disabled in dry-run')
+        with admin.guard(project):
+            state = admin.load(project)
+            if args.pause:
+                until = time.time()+duration(args.duration) if args.duration else 0
+                tmp = admin.pause_path(project).with_suffix('.pause.tmp')
+                tmp.write_text(str(until)); os.replace(tmp, admin.pause_path(project))
+            elif args.resume:
+                if admin.pause_path(project).exists(): admin.pause_path(project).unlink()
+                state.failures = 0; state.next_check = 0; admin.save(project,state)
+            elif args.reset_limit:
+                state.restarts.clear(); state.blocked=False
+                if state.recovery: state.recovery_options.update(max_restarts=config['max_restarts'], window=config['window'])
+                admin.save(project,state)
+            elif args.recover:
+                containers = discover().get(project, [])
+                if not containers and not state.recovery: parser.error('project not discovered')
+                if admin.paused(project): parser.error('project paused')
+                check_locked(project, containers, admin, config, args.mode or (project_options(containers,config)['mode'] if containers else config['mode']))
+        return
     if args.list:
         for project, containers in sorted(discover().items()):
             try:
@@ -344,6 +567,11 @@ def main():
     except BlockingIOError:
         parser.error('another watchdog is running')
     pending = {}
+    known = set()
+    wake = threading.Event()
+    last_summary = 0
+    if config['metrics_port'] and not args.once: metrics_server(store, config['metrics_port'])
+    if config['docker_events'] and not args.once: threading.Thread(target=event_listener,args=(wake,),daemon=True).start()
     with cf.ThreadPoolExecutor(max_workers=config['workers']) as pool:
         while True:
             started = time.monotonic()
@@ -356,6 +584,14 @@ def main():
                     del pending[project]
             try:
                 projects = discover()
+                discovered = set(projects)
+                for project in sorted(discovered-known): LOG.info('%s: discovered, monitoring started', project)
+                for project in sorted(known-discovered): LOG.info('%s: removed from discovery', project)
+                known = discovered
+                if config['summary_interval'] and time.monotonic()-last_summary >= config['summary_interval']:
+                    statuses = [state.status for p, state in store.all_states() if p in known]
+                    LOG.info('summary: projects=%s healthy=%s failed=%s pending=%s paused=%s',len(known),statuses.count('healthy'),statuses.count('failed'),len(pending),sum(store.paused(p) for p in known))
+                    last_summary=time.monotonic()
                 for project in store.recovering():
                     projects.setdefault(project, [])
             except (OSError, ValueError, subprocess.SubprocessError):
@@ -371,7 +607,8 @@ def main():
                     future.result()
                 return
             # Poll discovery often enough for shorter per-project intervals.
-            time.sleep(max(0, min(5, config['interval']) - (time.monotonic() - started)))
+            wake.wait(max(0, min(1, config['interval']) - (time.monotonic() - started)))
+            wake.clear()
 
 
 if __name__ == '__main__':
