@@ -1,0 +1,11 @@
+# Disposable example; do not use this as a production health endpoint.
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:18080:80"
+    labels:
+      watchdog.enabled: "true"
+      watchdog.path: "/"
+      watchdog.mode: "restart"
+      watchdog.max_restarts: "3"
