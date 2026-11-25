@@ -1,0 +1,17 @@
+[Unit]
+Description=Central Docker Compose Watchdog
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/local/lib/docker-watchdog/watchdog.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
