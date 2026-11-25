@@ -26,6 +26,7 @@ DEFAULTS = dict(interval=60, failures=3, cooldown=120, max_restarts=3,
                 log_success=True, log_level='INFO', summary_interval=600,
                 docker_events=True, webhook_url='', metrics_port=0,
                 pre_hook='', post_hook='', hook_timeout=30)
+VERSION = '1.2.1'
 MODES = {'restart', 'down-up', 'force-recreate'}
 LOG = logging.getLogger('watchdog')
 
@@ -379,12 +380,15 @@ def check_locked(project, containers, store, config, manual_mode=None):
             raise ValueError('running container has no published TCP port')
     except (ValueError, KeyError) as exc:
         state.failures = 0
+        state.status = 'config-error'
+        state.last_detail = str(exc)
         store.save(project, state)
         LOG.error('%s: configuration error: %s', project, exc)
         return
     if not manual_mode and healthy(containers, scheme, path, host, endpoints, cfg['http_timeout']):
         state.failures = 0
         state.escalation = 0
+        state.blocked = False
         state.last_check = time.time()
         state.last_detail = getattr(PROBE, 'detail', '')
         changed = state.status != 'healthy'
@@ -480,8 +484,14 @@ def event_listener(wake):
     while True:
         try:
             with subprocess.Popen(['docker','events','--filter','type=container','--format','{{json .}}'], stdout=subprocess.PIPE, text=True) as proc:
+                LOG.info('Docker Events subscriber started (pid=%s)', proc.pid)
+                first = True
                 for line in proc.stdout:
+                    if first:
+                        LOG.info('Docker Events stream confirmed by first event')
+                        first = False
                     wake.set()
+                LOG.warning('Docker Events stream closed; polling continues, reconnecting')
         except OSError:
             LOG.warning('Docker events unavailable; polling continues')
         time.sleep(5)
@@ -493,18 +503,90 @@ def duration(value):
     return int(m[1])*{'':1,'s':1,'m':60,'h':3600,'d':86400}[m[2]]
 
 
+def date_text(value):
+    return datetime.datetime.fromtimestamp(value).astimezone().isoformat(timespec='seconds') if value else '-'
+
+
+def display_status(state, paused, discovered, now):
+    if paused: return 'paused'
+    if state.recovery: return 'pending-up'
+    if not discovered: return 'removed'
+    if now < state.cooldown: return 'cooldown'
+    if now < state.grace_until: return 'starting'
+    if state.blocked and state.status == 'failed': return 'blocked'
+    return state.status
+
+
+def describe(project, containers, config, store, now=None):
+    now = time.time() if now is None else now
+    state = store.load(project)
+    paused = store.paused(project)
+    row = dict(project=project, discovered=bool(containers), paused=paused,
+               status=display_status(state, paused, bool(containers), now),
+               failures=state.failures, last_check=date_text(state.last_check),
+               last_detail=state.last_detail, next_check=date_text(max(state.next_check,state.cooldown)),
+               grace_until=date_text(state.grace_until), cooldown_until=date_text(state.cooldown),
+               recovery=state.recovery)
+    cfg = None
+    if containers:
+        try:
+            directory, files, scheme, path, host, endpoints = target(containers)
+            cfg = project_options(containers, config)
+            row.update(directory=directory, files=files, scheme=scheme, path=path, host=host,
+                       endpoints=sorted(endpoints), mode=cfg['mode'])
+        except (ValueError, KeyError) as exc:
+            row.update(error=str(exc), status='config-error' if not paused else 'paused')
+    elif state.recovery:
+        cfg = {**config, **state.recovery_options}
+    if cfg is not None:
+        keys = ('mode','recovery','interval','failures','cooldown','max_restarts','window','http_timeout','command_timeout','startup_grace','dry_run')
+        row['effective_options'] = {k: cfg[k] for k in keys}
+        attempts = sorted(t for t in state.restarts if now-t < cfg['window'])
+        limit = cfg['max_restarts']
+        row.update(attempts_in_window=len(attempts), next_recovery_allowed=date_text(max(state.cooldown, attempts[len(attempts)-limit]+cfg['window'] if limit and len(attempts)>=limit else 0)))
+    match = re.search(r'HTTP (\d+)', state.last_detail)
+    latency = re.search(r'duration=([0-9.]+)s', state.last_detail)
+    row['http'] = int(match[1]) if match else None
+    row['latency_ms'] = round(float(latency[1])*1000, 1) if latency else None
+    return row
+
+
+def print_table(headers, rows):
+    rows = [[str(v) if v is not None else '-' for v in r] for r in rows]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i,h in enumerate(headers)]
+    for r in [headers, ['-'*n for n in widths], *rows]:
+        print('  '.join(v.ljust(n) for v,n in zip(r,widths)).rstrip())
+
+
+def print_status(rows):
+    print(f'Docker Watchdog v{VERSION}')
+    print_table(['PROJECT','STATUS','PORT','HTTP','LATENCY MS','FAILURES','RESTARTS','MODE'], [
+        [r['project'],r['status'].upper(),','.join(map(str,sorted({p for _,p in r.get('endpoints',[])}))) or '-',r['http'],r['latency_ms'],
+         f"{r['failures']}/{r['effective_options']['failures']}" if 'effective_options' in r else r['failures'],
+         f"{r['attempts_in_window']}/{r['effective_options']['max_restarts'] or 'unlimited'}" if 'effective_options' in r else '-',r.get('mode','-')] for r in rows])
+    for r in rows:
+        print(f"  {r['project']}: last check={r['last_check']}; next check={r['next_check']}; recovery allowed={r.get('next_recovery_allowed','-')}")
+        if r.get('error'): print('    ERROR: '+r['error'])
+    counts = defaultdict(int)
+    for r in rows: counts[r['status']] += 1
+    print(f'Projects: {len(rows)}' + ''.join(f' | {k}: {v}' for k,v in sorted(counts.items())))
+
+
 def main():
     parser = argparse.ArgumentParser(description='Docker Compose watchdog')
     parser.add_argument('--config', default='/etc/docker-watchdog/watchdog.conf')
     parser.add_argument('--state-dir', default='/var/lib/docker-watchdog')
-    parser.add_argument('--list', action='store_true')
+    parser.add_argument('--json', action='store_true', help='machine-readable output for list, status and history')
+    parser.add_argument('--table', action='store_true', help='human-readable list instead of legacy JSON lines')
+    parser.add_argument('--raw', action='store_true', help='legacy raw state for status or history')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--once', action='store_true')
-    parser.add_argument('--version', action='version', version='1.2.0')
+    parser.add_argument('--version', action='version', version=VERSION)
     actions = parser.add_mutually_exclusive_group()
     for action in ('pause','resume','history','reset-limit','recover'):
         actions.add_argument('--'+action, metavar='PROJECT')
     actions.add_argument('--status', action='store_true')
+    actions.add_argument('--list', action='store_true')
     parser.add_argument('--duration')
     parser.add_argument('--mode', choices=sorted(MODES))
     args = parser.parse_args()
@@ -518,13 +600,28 @@ def main():
         if args.status:
             active = discover()
             names = set(active) | {name for name, _ in admin.all_states()}
-            for name in sorted(names):
-                state = admin.load(name)
-                print(json.dumps(dict(vars(state), project=name, discovered=name in active, paused=admin.paused(name), restarts=list(state.restarts))))
+            if args.raw:
+                for name in sorted(names):
+                    state = admin.load(name)
+                    print(json.dumps(dict(vars(state), project=name, discovered=name in active, paused=admin.paused(name), restarts=list(state.restarts))))
+            else:
+                rows = [describe(name, active.get(name, []), config, admin) for name in sorted(names)]
+                if args.json:
+                    for row in rows: print(json.dumps(row))
+                else: print_status(rows)
             return
         if args.history:
             state = admin.load(project)
-            print(json.dumps(dict(history=state.history, restart_timestamps=list(state.restarts)), indent=2)); return
+            if args.raw:
+                print(json.dumps(dict(history=state.history, restart_timestamps=list(state.restarts)), indent=2))
+            elif args.json:
+                print(json.dumps(dict(history=[dict(r, date=date_text(r['time'])) for r in state.history], restart_timestamps=[date_text(t) for t in state.restarts]), indent=2))
+            else:
+                print(f'Recovery history: {project}')
+                print_table(['DATE','MODE','RESULT'], [[date_text(r['time']),r['mode'],r['result']] for r in state.history])
+                print('Retained attempt timestamps (including legacy attempts):')
+                for t in state.restarts: print('  '+date_text(t))
+            return
         if config['dry_run']:
             parser.error('administrative mutation disabled in dry-run')
         with admin.guard(project):
@@ -547,15 +644,15 @@ def main():
                 check_locked(project, containers, admin, config, args.mode or (project_options(containers,config)['mode'] if containers else config['mode']))
         return
     if args.list:
-        for project, containers in sorted(discover().items()):
-            try:
-                directory, files, scheme, path, host, endpoints = target(containers)
-                cfg = project_options(containers, config)
-                print(json.dumps(dict(project=project, directory=directory, files=files,
-                    scheme=scheme, path=path, host=host, endpoints=sorted(endpoints), mode=cfg['mode'])))
-            except (ValueError, KeyError) as exc:
-                print(json.dumps(dict(project=project, error=str(exc))))
+        rows = [describe(name, containers, config, Store(args.state_dir, readonly=True)) for name, containers in sorted(discover().items())]
+        if args.table:
+            print_status(rows)
+        else:
+            for row in rows:
+                keys = ('project','directory','files','scheme','path','host','endpoints','mode','error')
+                print(json.dumps(row if args.json else {k: row[k] for k in keys if k in row}))
         return
+    LOG.info('Docker Watchdog v%s starting (dry_run=%s, docker_events=%s)', VERSION, config['dry_run'], config['docker_events'])
     store = Store(args.state_dir, readonly=config['dry_run'])
     # Dry-run keeps its own temporary state, not production counters.
     temp = tempfile.TemporaryDirectory() if config['dry_run'] else None
@@ -589,8 +686,10 @@ def main():
                 for project in sorted(known-discovered): LOG.info('%s: removed from discovery', project)
                 known = discovered
                 if config['summary_interval'] and time.monotonic()-last_summary >= config['summary_interval']:
-                    statuses = [state.status for p, state in store.all_states() if p in known]
-                    LOG.info('summary: projects=%s healthy=%s failed=%s pending=%s paused=%s',len(known),statuses.count('healthy'),statuses.count('failed'),len(pending),sum(store.paused(p) for p in known))
+                    statuses = defaultdict(int)
+                    for name in known:
+                        statuses[display_status(store.load(name), store.paused(name), True, time.time())] += 1
+                    LOG.info('summary: projects=%s %s workers_active=%s', len(known), ' '.join(f'{k}={statuses[k]}' for k in ('healthy','failed','starting','unknown','paused','blocked','cooldown','pending-up','config-error')), len(pending))
                     last_summary=time.monotonic()
                 for project in store.recovering():
                     projects.setdefault(project, [])

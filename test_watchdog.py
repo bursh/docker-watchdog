@@ -102,3 +102,30 @@ class WatchdogTests(unittest.TestCase):
 
     def test_commented_config(self):
         self.assertEqual(w.load_config(Path(__file__).with_name('watchdog.conf')),w.DEFAULTS)
+
+    def test_status_effective_options(self):
+        self.c['Config']['Labels']['watchdog.max_restarts']='0'
+        self.store.save('p', w.State(restarts=w.deque([100, 990]), last_detail='HTTP 302 endpoint=127.0.0.1:12345 duration=0.055s', status='healthy'))
+        row=w.describe('p',[self.c],self.cfg,self.store,now=1000)
+        self.assertEqual(row['effective_options']['max_restarts'],0)
+        self.assertEqual(row['http'],302)
+        self.assertEqual(row['latency_ms'],55)
+        self.assertEqual(row['status'],'healthy')
+
+    def test_display_status(self):
+        self.assertEqual(w.display_status(w.State(grace_until=200),False,True,100),'starting')
+        self.assertEqual(w.display_status(w.State(),True,True,100),'paused')
+        self.assertEqual(w.display_status(w.State(),False,False,100),'removed')
+        self.assertEqual(w.display_status(w.State(recovery='up'),False,False,100),'pending-up')
+
+    def test_status_rate_window(self):
+        self.cfg.update(max_restarts=1,window=60)
+        self.store.save('p',w.State(restarts=w.deque([100,990])))
+        row=w.describe('p',[self.c],self.cfg,self.store,now=1000)
+        self.assertEqual(row['attempts_in_window'],1)
+        self.assertEqual(row['next_recovery_allowed'],w.date_text(1050))
+
+    def test_empty_table(self):
+        from unittest.mock import patch
+        with patch('builtins.print'):
+            w.print_status([])

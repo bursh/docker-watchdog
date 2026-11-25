@@ -1,6 +1,6 @@
-# Docker Watchdog 1.2.0
+# Docker Watchdog 1.2.1
 
-Linux Debian/Ubuntu, existing Docker Engine and Compose V2, root-managed trusted Compose files. Install `sudo apt install ./docker-watchdog_1.2.0-1_all.deb`. If migrating from a manual install remove its overriding `/etc/systemd/system/docker-watchdog.service` after checking it, then daemon-reload and restart. `systemctl status docker-watchdog`; `journalctl -u docker-watchdog -f`.
+Linux Debian/Ubuntu, existing Docker Engine and Compose V2, root-managed trusted Compose files. Install `sudo apt install ./docker-watchdog_1.2.1-1_all.deb`. If migrating from a manual install remove its overriding `/etc/systemd/system/docker-watchdog.service` after checking it, then daemon-reload and restart. `systemctl status docker-watchdog`; `journalctl -u docker-watchdog -f`.
 
 Add labels to the single service exposing a TCP port:
 
@@ -35,3 +35,7 @@ Maintenance: `docker-watchdog --pause PROJECT [--duration 30m]` waits for any in
 Detailed HTTP diagnostics, lifecycle messages, optional success logging and summary are in journald. Scheduling targets check start times with a one-second polling fallback plus Docker events; overload and HTTP/Docker latency can still delay checks. `metrics_port = 9109` enables `/metrics` on localhost only; metrics describe persisted state including removed projects, not live availability. `webhook_url` accepts a generic HTTPS JSON event (normal recovery completed/failed); configure a relay for vendor-specific notifications. Hooks are global root-managed absolute executable paths, not labels; never use untrusted scripts. Pending up retries do not invoke hooks/webhook. Pre-hook failure prevents automatic recovery; post-hook failure is logged. Both disabled by default. Webhook failures do not change recovery outcome. No direct Slack/Teams/Telegram integration or live APT deployment is provided.
 
 Docker integration tests: `bash tests/integration.sh` on an isolated Docker host only. GitHub Actions runs them on its dedicated runner. They are supplied but have not been executed in the build environment (Docker is unavailable).
+
+## 1.2.1 CLI and observability
+
+`--status` and `--history PROJECT` now default to human-readable tables with local ISO-8601 dates and UTC offsets. Use `--status --json` for enriched JSON lines, `--history PROJECT --json` for dated JSON, or `--raw` with either command for the old raw schema. `--list` preserves its previous JSON-lines output; `--list --table` renders a table and `--list --json` includes effective settings. Effective settings reflect the CLI configuration file and current labels; restart the daemon after changing the file. Pending recovery without containers uses saved recovery options. Status is a snapshot of saved observations, not a live HTTP probe. A dash means no timestamp/value. Summary categories are exclusive for discovered projects; workers_active is a separate count. Docker Events logs distinguish process startup from confirmation by the first received event. Configuration and state formats remain unchanged.
