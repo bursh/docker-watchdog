@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog documentation: automatic recovery of Docker Compose projects on Linux."><title>Docker Watchdog | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>OPEN SOURCE / APACHE-2.0 / v1.2.2</small><h1>Docker Watchdog</h1><p>Centralized HTTP monitoring and automatic recovery for Docker Compose on Linux.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h2>One service. Multiple projects.</h2>
-<p>Discover opt-in Compose services through Docker labels. Resolve their published HTTP ports automatically. After three failed checks (by default), recover the affected Compose project, then wait through cooldown and verify availability.</p>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog documentation: automatic recovery of Docker Compose projects on Linux."><title>Docker Watchdog | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>OPEN SOURCE / APACHE-2.0 / v1.3.0</small><h1>Docker Watchdog</h1><p>Centralized HTTP and Docker Healthcheck monitoring with automatic recovery for Docker Compose on Linux.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a class="nav-cta" href="configurator.html">Label configurator</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h2>One service. Multiple projects.</h2>
+<p>Discover opt-in Compose containers through Docker labels. Resolve their published HTTP ports automatically or read Docker Healthcheck status without publishing a port. Each monitored container has independent checks and failure counters. Recover just a container or the whole project with a coordinated policy.</p>
 <h2>Quick start</h2>
 <ol>
-<li>Install the DEB or follow the <a href="install.html">platform installation guide</a>.</li>
-<li>Add the labels below to the HTTP service publishing one port.</li>
+<li>Install the DEB/RPM or follow the <a href="install.html">platform installation guide</a>.</li>
+<li>Generate labels with the <a href="configurator.html">interactive configurator</a> or add the example below to an HTTP service publishing one port.</li>
 <li>Run <code>docker compose up -d</code>, then <code>sudo docker-watchdog --status</code>.</li>
 </ol>
 <pre><code class="language-yaml">labels:
@@ -13,7 +13,7 @@
   watchdog.mode: &quot;restart&quot;
 </code></pre>
 <p>Use <code>/</code> if a dedicated health endpoint is unavailable. A redirect counts as reachable, so a meaningful application endpoint is preferable.</p>
-<h2>Recovery modes</h2>
+<h2>Monitoring methods</h2><p>Choose <code>http</code> (default), <code>healthcheck</code>, <code>both</code> or <code>auto</code>. Docker Healthcheck works with private backend and database containers without published ports. Its failure threshold is separately configurable.</p><h2>Recovery modes</h2>
 <table>
 <thead>
 <tr>
@@ -22,6 +22,8 @@
 </tr>
 </thead>
 <tbody>
+<tr><td>container-restart</td><td>Restart one monitored container by Docker ID</td></tr>
+<tr><td>container-recreate</td><td>Recreate one single-replica Compose service, without its dependencies</td></tr>
 <tr>
   <td>restart</td>
   <td>Restart existing Compose containers</td>
@@ -36,11 +38,11 @@
 </tr>
 </tbody>
 </table>
-<p>Optional escalation, persistent restart limits, maintenance pause/resume, logs, webhooks and loopback Prometheus metrics are supported. <code>max_restarts = 0</code> permits unlimited attempts; cooldown still applies.</p>
+<p>When one target reaches its failure threshold and two targets are confirmed failed (configurable), the watchdog promotes to one whole-project action. Container cooldown does not delay other targets. A shared project rate budget and lock prevent runaway or duplicate recovery.</p><p>Optional escalation, persistent restart limits, maintenance pause/resume, logs, webhooks and loopback Prometheus metrics are supported. <code>max_restarts = 0</code> permits unlimited attempts; cooldown still applies.</p>
 <h2>Operational safety</h2>
 <p>Run only on trusted Linux hosts. Docker access is root-equivalent. Pause projects before maintenance and use named volumes and fixed published ports. Test on isolated infrastructure before enabling recovery. See the <a href="manual.html">full manual</a> and <a href="https://github.com/bursh/docker-watchdog/blob/main/SECURITY.md">security policy</a>.</p>
 <h2>Supported environments</h2>
-<p>Debian/Ubuntu are the primary target; other compatible systemd Linux distributions have a manual installation path but are not integration-tested. No native Windows or macOS support. See <a href="install.html">installation</a>.</p>
+<p>DEB and noarch RPM build paths cover Debian/Ubuntu and candidate RPM distributions; see the platform guide for tested and unvalidated environments. Manual installation is available on compatible systemd Linux hosts. No native Windows or macOS support. See <a href="install.html">installation</a>.</p>
 <h2>Project status</h2>
-<p>Source snapshots v1.0.0 through v1.2.2 are preserved as Git tags. Release assets and this site become available after the repository owner publishes them. CI includes unit tests and a Docker integration script; deployment and integration status should be checked in GitHub Actions.</p>
+<p>Source snapshots v1.0.0 through v1.2.2 are preserved as Git tags. Check Releases for published packages and GitHub Actions for the test status of v1.3.0. CI includes unit tests and a Docker integration script; deployment and integration status should be checked in GitHub Actions.</p>
 </section></main><footer>Docker Watchdog · Apache-2.0 · <a href="https://github.com/bursh/docker-watchdog/issues">Issues and feedback</a></footer></body></html>

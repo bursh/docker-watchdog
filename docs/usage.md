@@ -1,45 +1,80 @@
-# Docker Watchdog 1.2.2
+# Usage and operations
 
-Linux Debian/Ubuntu, existing Docker Engine and Compose V2, root-managed trusted Compose files. Install `sudo apt install ./docker-watchdog_1.2.2-1_all.deb`. If migrating from a manual install remove its overriding `/etc/systemd/system/docker-watchdog.service` after checking it, then daemon-reload and restart. `systemctl status docker-watchdog`; `journalctl -u docker-watchdog -f`.
+See the [full manual](docker-watchdog.1.md) (`man docker-watchdog` after package installation) for every CLI argument, configuration option, Docker label, recovery mode, and troubleshooting topic. [Installation](install.md) covers Debian/RPM packages, platform limitations, manual installation, upgrades, and signed repository staging. The [browser configurator](configurator.html) generates Compose labels locally without sending data to any server.
 
-Add labels to the single service exposing a TCP port:
+## Monitoring a web service
 
 ```yaml
 labels:
   watchdog.enabled: "true"
+  watchdog.check: "http"
   watchdog.path: "/health"
-  watchdog.scheme: "http"
-  watchdog.mode: "force-recreate"
-  watchdog.interval: "60"
-  watchdog.failures: "3"
+  watchdog.mode: "container-restart"
 ```
 
-Apply with `docker compose up -d`. Global defaults in `/etc/docker-watchdog/watchdog.conf` (dpkg conffile); restart watchdog after changes. Labels override defaults: mode, interval, failures, cooldown, max_restarts, window, http_timeout, command_timeout. `watchdog.host` sets HTTP Host header, not TLS SNI. Checks use published binding addresses, no proxy, no redirect follow, 2xx/3xx healthy. IPv4/IPv6 wildcard maps to loopback. HTTPS validates the certificate against the binding address. Prefer HTTP behind ALB. One unique published TCP port and one labelled service per project; replicas with different ports are unsupported. Discovery polls every second; checks are scheduled per project, subject to Docker and worker latency.
+Use the real application readiness endpoint. The default is `/`. Each HTTP target must expose one unique TCP host port; IPv4 and IPv6 bindings of the same port are allowed. HTTP 2xx/3xx are accepted without following redirects. For TLS-terminating ALBs, local HTTP usually avoids certificate hostname issues. Private targets can use Docker Healthcheck with no port publication.
 
-Modes: `restart` (default, existing containers); `down-up` (down then up -d, even if down fails); `force-recreate` (up -d --force-recreate). No volume deletion or image pull flags. Anonymous volumes may be detached by down; container writable layers and dynamic host ports can change in recreate modes. ALB registration must remain correct. Compose project name, working directory and config files come from Docker labels. Custom CLI env files/profiles/environment are not recovered; verify manually with the same systemd environment. Do not use with untrusted Compose files. Intentionally stopped labelled containers count as unhealthy. Pause the project before maintenance; removing labels alone does not cancel a pending down-up recovery.
+## Monitoring a private container
 
-`sudo docker-watchdog --list` prints discovered targets as JSON lines without changing state. `sudo docker-watchdog --dry-run` continuously simulates using isolated temporary counters, can coexist with production (stop production if you want no real recovery). Ctrl-C to stop. `--dry-run --once` performs one check only. `--once` without dry-run uses production state and can restart; it refuses to run concurrently with the daemon. `--version`, `--config PATH`, `--state-dir PATH` also supported.
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "test -f /tmp/ready"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s
+labels:
+  watchdog.enabled: "true"
+  watchdog.check: "healthcheck"
+  watchdog.healthcheck_failures: "1"
+  watchdog.mode: "container-restart"
+```
 
-Persistent state in `/var/lib/docker-watchdog` (atomic per-project JSON files, exclusive process lock). Counters and rate history survive daemon/host restart. Each down-up attempt persists the up command before down, then retries up even if labelled containers disappear; rate limit applies to retries as well. Failed up may remain pending until cooldown/rate window expires. State uses wall clock; avoid large clock changes. Project state is retained until manually removed, including after project deletion. For planned permanent removal, stop watchdog, remove relevant labels and inspect/remove only the corresponding state JSON if recovery is pending. State files include project name. Do not edit while service is running. Removing package preserves state; purge also preserves state deliberately; manually delete only if desired.
+This is an example check only; make sure the application sets `/tmp/ready` appropriately or replace the check. `healthcheck_failures = 0` inherits `failures` (3 by default); `1` recovers at the first scheduled observation of Docker unhealthy/stopped. Docker's own interval/retries/start period apply before it reports unhealthy. Docker events wake discovery but do not bypass the watchdog's scheduled check interval. `starting` neither increments the failure counter nor initiates recovery. Missing healthcheck in `healthcheck`/`both` is a configuration error, not a recovery trigger. `auto` prefers Docker Healthcheck if configured, otherwise HTTP. `both` requires both checks, waiting while Docker reports `starting`.
 
-Build: `python3 -m unittest -v && ./build-deb.sh`. GitHub Actions builds/tests on pushes and pull requests. APT publishing: on a trusted build host install `dpkg-dev apt-utils gnupg`, create/select your own signing key, run `./publish-apt.sh /path/to/staging/repo KEY_ID dist/*.deb`. Publish resulting directory over HTTPS atomically (including Packages, Release, InRelease, Release.gpg). Never publish private key. Verify public key fingerprint out of band; install exported key as `/etc/apt/keyrings/docker-watchdog.asc`, mode 0644; add `deb [signed-by=/etc/apt/keyrings/docker-watchdog.asc] https://YOUR-HOST/apt/ ./` to `/etc/apt/sources.list.d/docker-watchdog.list`. Then `apt update && apt install docker-watchdog`. Repo hosting, signing key and publishing credentials are not supplied. CI builds the artifact; deployment is intentionally manual until infrastructure and credentials are chosen.
+## Coordinating recovery of several targets
 
-No Docker runtime integration test in the build environment. Unit tests mock Docker recovery operations. Test on a non-production host before enabling automated recovery.
+The container counter key is Compose service name + replica number (`service:number`). Different targets have independent counters, methods, schedules, escalation, startup grace and container cooldown. HTTP probes within a project are processed together by its worker; other projects run in parallel. A project-wide lock serializes recovery actions and manual maintenance commands. All due probes run before selecting one action. If one target reaches its configured threshold and at least `project_failure_threshold` targets are confirmed failed, the watchdog chooses one `project_recovery_mode` action instead of individual actions. Older failed observations are reconfirmed without incrementing counters before that decision. Default threshold is 2; 0 disables promotion; default project mode is `restart`. If promotion does not apply, a ready whole-project action takes precedence over a ready container action.
 
-## Version 1.2 additions
+Project-wide `watchdog.project_failure_threshold` and `watchdog.project_recovery_mode` labels can be provided on any monitored service; explicit values must agree. Other check/recovery labels are per target. All attempts (including container attempts) consume a shared project budget; effective mixed policies use the smallest nonzero `max_restarts` and largest `window`, with project-wide cooldown/command timeout also taking the largest effective value. To make all attempts unlimited, set `max_restarts = 0` globally with no positive overrides, or explicitly on every target. A local container cooldown does not prevent other containers recovering; the shared rate limit and a whole-project cooldown still apply. If several targets fail simultaneously during one check round, a single project action resets their counters and starts the project cooldown. There is no atomic coordination with external Compose commands; pause before maintenance.
 
-The fully commented default configuration is also installed at `/usr/share/doc/docker-watchdog/watchdog.conf.example` for upgrades retaining a modified conffile. Merge new options rather than overwrite production settings. `max_restarts = 0` (or label `watchdog.max_restarts: "0"`) disables the rate limit, not cooldown. Default remains 3 per hour. `watchdog.startup_grace` and `watchdog.recovery` override global settings. A recovery sequence advances on each attempt until a successful HTTP check, then resets. Explicit project mode overrides global escalation. The last step repeats until healthy or rate-limited.
+## CLI examples
 
-Maintenance: `docker-watchdog --pause PROJECT [--duration 30m]` waits for any in-progress recovery for that project to complete, then persists a pause; use before manual Compose changes. `--resume PROJECT` clears pause and failure count. Pausing also suspends pending up; resuming may retry it. Manual down alone is best effort: the daemon re-discovers immediately before automatic recovery, but cannot atomically coordinate external Compose commands. Use pause for guaranteed coordination with this daemon. `--status` outputs discovered and retained project state, `--history PROJECT` prints up to 500 new history records plus rate timestamps (old records lack mode/result), `--reset-limit PROJECT` clears rate history, `--recover PROJECT --mode MODE` requests an immediate recovery, respecting pause and rate limit (pending up retains priority and cooldown). Administrative commands use per-project locks. Do not run a second daemon with a different state directory against the same Docker host.
+```sh
+docker-watchdog --status
+docker-watchdog --status --json
+docker-watchdog --list --table
+docker-watchdog --history example
+docker-watchdog --recover example --mode container-restart --container worker
+docker-watchdog --recover example --mode container-recreate --container worker:1
+docker-watchdog --recover example --mode restart
+docker-watchdog --pause example --duration 30m
+docker-watchdog --resume example
+docker-watchdog --reset-limit example
+```
 
-Detailed HTTP diagnostics, lifecycle messages, optional success logging and summary are in journald. Scheduling targets check start times with a one-second polling fallback plus Docker events; overload and HTTP/Docker latency can still delay checks. `metrics_port = 9109` enables `/metrics` on localhost only; metrics describe persisted state including removed projects, not live availability. `webhook_url` accepts a generic HTTPS JSON event (normal recovery completed/failed); configure a relay for vendor-specific notifications. Hooks are global root-managed absolute executable paths, not labels; never use untrusted scripts. Pending up retries do not invoke hooks/webhook. Pre-hook failure prevents automatic recovery; post-hook failure is logged. Both disabled by default. Webhook failures do not change recovery outcome. No direct Slack/Teams/Telegram integration or live APT deployment is provided.
+Container selection accepts an exact full Docker container name, ID, unique Compose service, or `service:number`. The container must be monitored. When exactly one container is monitored, `--container` is optional. For `container-recreate`, the service must have one live/stopped service container and be configured for one replica; the watchdog validates both and uses Compose `up -d --no-deps --force-recreate -- SERVICE`. It does not recreate other services. `container-restart` uses the exact Docker ID and works with replicas. `--container` cannot be used to narrow a project-wide mode.
 
-Docker integration tests: `bash tests/integration.sh` on an isolated Docker host only. GitHub Actions runs them on its dedicated runner. They are supplied but have not been executed in the build environment (Docker is unavailable).
+The `--status --json` and `--list --json` project objects now include a `containers` array (per-target options, check status, counters, endpoints, Docker health status, and HTTP timing where applicable). Project-level rate policy remains at the top level. Legacy list fields remain for single-target projects; for multi-target projects, endpoints are the combined list and mode is `multiple`. `--history` includes the container name for container actions. The project-level `failures` value is the maximum target counter. Existing `--raw` state includes a new `targets` map.
 
-## 1.2.1 CLI and observability
+## Escalation and maintenance
 
-`--status` and `--history PROJECT` now default to human-readable tables with local ISO-8601 dates and UTC offsets. Use `--status --json` for enriched JSON lines, `--history PROJECT --json` for dated JSON, or `--raw` with either command for the old raw schema. `--list` preserves its previous JSON-lines output; `--list --table` renders a table and `--list --json` includes effective settings. Effective settings reflect the CLI configuration file and current labels; restart the daemon after changing the file. Pending recovery without containers uses saved recovery options. Status is a snapshot of saved observations, not a live HTTP probe. A dash means no timestamp/value. Summary categories are exclusive for discovered projects; workers_active is a separate count. Docker Events logs distinguish process startup from confirmation by the first received event. Configuration and state formats remain unchanged.
+```yaml
+labels:
+  watchdog.enabled: "true"
+  watchdog.check: "healthcheck"
+  watchdog.recovery: "container-restart,container-recreate,restart,force-recreate,down-up"
+  watchdog.max_restarts: "0"
+```
 
-## 1.2.2 manual page
+A successful check resets that target's escalation. The last step repeats if failures persist. Project-wide promotion may override the next target step. If you use escalation with a scaled service, omit `container-recreate`. Manual recovery respects pause and the shared rate limit; pending-up recovery takes precedence. For maintenance use `--pause` before `docker compose down`, deploy, and `--resume` after successful deployment. Pausing waits for an active operation; a pending up is suspended, not canceled. Plan for data persistence and fixed ALB ports. See the manual for more safety details.
 
-Run `man docker-watchdog` after installation (install `man-db` if absent). The English manual covers CLI, configuration, labels, recovery, maintenance, diagnostics, metrics and security. The generated roff page is included in source, so building the package requires no Pandoc. To regenerate it after editing, run `pandoc -f markdown-smart -s -t man docs/docker-watchdog.1.md -o docs/docker-watchdog.1`. No recovery logic changed in this release.
+## Diagnostics
+
+```sh
+journalctl -u docker-watchdog --since '24 hours ago' --no-pager
+journalctl -u docker-watchdog --since '24 hours ago' --no-pager | grep -Ei 'FAIL|ERROR|recovery'
+curl http://127.0.0.1:9109/metrics  # if metrics_port = 9109
+```
+
+Logs include `PROJECT/SERVICE:NUMBER` for target observations. Metrics retain project gauges and add `docker_watchdog_container_failures{project,container}`. Webhooks include `container` for container-level recovery; hooks preserve the original three arguments. Pending-up retries do not call hooks/webhooks. For troubleshooting, see the [manual](docker-watchdog.1.md).

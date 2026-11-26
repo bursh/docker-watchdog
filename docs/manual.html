@@ -1,26 +1,69 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog documentation: automatic recovery of Docker Compose projects on Linux."><title>Command reference | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>OPEN SOURCE / APACHE-2.0 / v1.2.2</small><h1>Command reference</h1><p>Centralized HTTP monitoring and automatic recovery for Docker Compose on Linux.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h1>NAME</h1>
-<p>docker-watchdog - discover, monitor and recover Docker Compose projects</p>
-<h1>SYNOPSIS</h1>
-<p><strong>docker-watchdog</strong> [<strong>--config</strong> <em>PATH</em>] [<strong>--state-dir</strong> <em>PATH</em>] [<strong>--dry-run</strong>] [<strong>--once</strong>]</p>
-<p><strong>docker-watchdog</strong> <strong>--list</strong> [<strong>--table</strong> | <strong>--json</strong>]</p>
-<p><strong>docker-watchdog</strong> <strong>--status</strong> [<strong>--json</strong> | <strong>--raw</strong>]</p>
-<p><strong>docker-watchdog</strong> <strong>--history</strong> <em>PROJECT</em> [<strong>--json</strong> | <strong>--raw</strong>]</p>
-<p><strong>docker-watchdog</strong> <strong>--pause</strong> <em>PROJECT</em> [<strong>--duration</strong> <em>TIME</em>]</p>
-<p><strong>docker-watchdog</strong> <strong>--resume</strong> <em>PROJECT</em></p>
-<p><strong>docker-watchdog</strong> <strong>--reset-limit</strong> <em>PROJECT</em></p>
-<p><strong>docker-watchdog</strong> <strong>--recover</strong> <em>PROJECT</em> [<strong>--mode</strong> <em>MODE</em>]</p>
-<p><strong>docker-watchdog</strong> <strong>--help</strong> | <strong>--version</strong></p>
-<h1>DESCRIPTION</h1>
-<p>Docker Watchdog is a centralized Linux service that monitors HTTP availability of Docker Compose projects on the local Docker host. It requires Python 3, Docker Engine and Docker Compose V2. The Debian package installs a systemd service; normally no separate watchdog container is needed.</p>
-<p>Projects opt in using the container label <code>watchdog.enabled=true</code>. Only labelled Compose services are inspected for published TCP ports. Other services, including databases, are not HTTP targets, but are included in project-wide recovery. Stopped labelled containers remain discoverable; one-off Compose containers are ignored. One labelled service and one distinct published TCP port per project are supported. IPv4 and IPv6 bindings of the same port are allowed. Ambiguous targets are not recovered automatically.</p>
-<p>The watchdog obtains the project name, working directory and Compose file list from Docker metadata. It probes the actual published host port directly, bypassing external DNS, load balancers and proxies. Wildcard IPv4/IPv6 addresses become 127.0.0.1/::1. A successful response from an available endpoint is sufficient. HTTP 2xx and 3xx count as healthy; redirects are not followed. HTTP errors and connection failures count as failed checks. HTTPS validates certificates against the binding address; the Host header does not set TLS SNI. Prefer a local HTTP health endpoint behind an AWS ALB terminating TLS.</p>
-<p>By default, three consecutive failures at 60-second intervals trigger recovery of the entire project. One successful check resets the failure counter and recovery escalation. Recovery is followed by a 120-second cooldown. Checks are scheduled independently; worker saturation, Docker latency and HTTP timeouts can delay execution. Docker events wake discovery, with periodic polling as a fallback.</p>
-<h1>QUICK START</h1>
-<p>Install the local package and inspect the service:</p>
-<pre><code>sudo apt install ./docker-watchdog_1.2.2-1_all.deb
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog Manual"><title>Manual | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>DOCKER WATCHDOG / v1.3.0</small><h1>Manual</h1><p>Complete command-line and configuration reference.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a class="nav-cta" href="configurator.html">Label configurator</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h1 id="name">NAME</h1>
+<p>docker-watchdog - discover, monitor and recover Docker Compose
+projects</p>
+<h1 id="synopsis">SYNOPSIS</h1>
+<p><strong>docker-watchdog</strong> [<strong>--config</strong>
+<em>PATH</em>] [<strong>--state-dir</strong> <em>PATH</em>]
+[<strong>--dry-run</strong>] [<strong>--once</strong>]</p>
+<p><strong>docker-watchdog</strong> <strong>--list</strong>
+[<strong>--table</strong> | <strong>--json</strong>]</p>
+<p><strong>docker-watchdog</strong> <strong>--status</strong>
+[<strong>--json</strong> | <strong>--raw</strong>]</p>
+<p><strong>docker-watchdog</strong> <strong>--history</strong>
+<em>PROJECT</em> [<strong>--json</strong> | <strong>--raw</strong>]</p>
+<p><strong>docker-watchdog</strong> <strong>--pause</strong>
+<em>PROJECT</em> [<strong>--duration</strong> <em>TIME</em>]</p>
+<p><strong>docker-watchdog</strong> <strong>--resume</strong>
+<em>PROJECT</em></p>
+<p><strong>docker-watchdog</strong> <strong>--reset-limit</strong>
+<em>PROJECT</em></p>
+<p><strong>docker-watchdog</strong> <strong>--recover</strong>
+<em>PROJECT</em> [<strong>--mode</strong> <em>MODE</em>]
+[<strong>--container</strong> <em>TARGET</em>]</p>
+<p><strong>docker-watchdog</strong> <strong>--help</strong> |
+<strong>--version</strong></p>
+<h1 id="description">DESCRIPTION</h1>
+<p>Docker Watchdog is a centralized Linux service that monitors HTTP
+availability and Docker Healthcheck status of Docker Compose containers
+on the local Docker host. It requires Python 3, Docker Engine and Docker
+Compose V2. The Debian and RPM packages install a systemd service;
+normally no separate watchdog container is needed.</p>
+<p>Projects opt in using the container label
+<code>watchdog.enabled=true</code>. Multiple labelled services and
+replicas can be monitored in one project. Each HTTP target supports one
+distinct published TCP host port (IPv4 and IPv6 bindings of the same
+port are allowed). Healthcheck-only targets do not need published ports.
+Unlabelled services are not monitored but are included in whole-project
+recovery. Stopped labelled containers remain discoverable; one-off
+Compose containers are ignored. Ambiguous or invalid targets are not
+recovered automatically.</p>
+<p>The watchdog obtains the project name, working directory and Compose
+file list from Docker metadata. It probes the actual published host port
+directly, bypassing external DNS, load balancers and proxies. Wildcard
+IPv4/IPv6 addresses become 127.0.0.1/::1. A successful response from an
+available endpoint is sufficient. HTTP 2xx and 3xx count as healthy;
+redirects are not followed. HTTP errors and connection failures count as
+failed checks. HTTPS validates certificates against the binding address;
+the Host header does not set TLS SNI. Prefer a local HTTP health
+endpoint behind an AWS ALB terminating TLS.</p>
+<p>By default, three consecutive failures at 60-second intervals trigger
+recovery of the entire project. Each target has its own counter,
+schedule and escalation. A successful check resets only that target.
+Individual container recovery applies a 120-second cooldown to the
+affected container; project recovery applies the cooldown to the whole
+project. One project worker processes its due targets and chooses one
+recovery under a shared lock; different projects can run in parallel.
+Worker saturation, Docker latency and HTTP timeouts can delay execution.
+Docker events wake discovery but do not bypass the check interval.</p>
+<h1 id="quick-start">QUICK START</h1>
+<p>Install the local package for your distribution and inspect the
+service:</p>
+<pre><code>sudo apt install ./docker-watchdog_1.3.0-1_all.deb
+# Or on a compatible RPM host:
+sudo dnf install ./docker-watchdog-1.3.0-1.noarch.rpm
 sudo systemctl status docker-watchdog</code></pre>
-<p>Add labels to the web service in its existing Compose file. For example:</p>
+<p>Add labels to a web service in its existing Compose file. For private
+services use Docker Healthcheck (see CHECK METHODS). For example:</p>
 <pre><code>services:
   nginx:
     image: nginx:alpine
@@ -35,119 +78,455 @@ sudo systemctl status docker-watchdog</code></pre>
 sudo docker-watchdog --list --table
 sudo docker-watchdog --status
 sudo journalctl -u docker-watchdog -f</code></pre>
-<p>Use the actual application health path if available. No manual port configuration is required. The example project name is not necessarily the directory name; use the name returned by --list.</p>
-<h1>OPTIONS</h1>
-<p><strong>--help</strong>, <strong>-h</strong>
-: Show command-line usage and exit.</p>
-<p><strong>--version</strong>
-: Print the program version and exit.</p>
-<p><strong>--config</strong> <em>PATH</em>
-: Read an alternative INI configuration. Default: /etc/docker-watchdog/watchdog.conf. Applies to daemon and CLI operations. Missing files use built-in defaults.</p>
-<p><strong>--state-dir</strong> <em>PATH</em>
-: Select persistent state directory; default /var/lib/docker-watchdog. Do not run two real daemons against the same Docker host with separate state directories.</p>
-<p><strong>--list</strong>
-: Discover current labelled projects and print legacy JSON Lines (one JSON object per project). Does not perform a health probe or recovery. Includes project name, directory, Compose files, scheme, path, host, endpoints and mode where available.</p>
-<p><strong>--table</strong>
-: With --list, display a human-readable table rather than JSON Lines.</p>
-<p><strong>--status</strong>
-: Show current discovered and retained project state, including health, failure counts, mode, rate limits and last observation. It reads saved results, not a live HTTP probe. Effective settings are calculated from the CLI configuration and current labels, so restart the daemon after changing configuration.</p>
-<p><strong>--json</strong>
-: With --list or --status, emit enriched JSON Lines including effective settings. With --history, emit a JSON object with dated history. Do not combine with --table or --raw.</p>
-<p><strong>--raw</strong>
-: With --status or --history, emit the legacy raw state schema, including Unix timestamps. Useful for older automation.</p>
-<p><strong>--history</strong> <em>PROJECT</em>
-: Display up to 500 recorded recovery events with dates, modes and results; also shows retained attempt timestamps. Older v1.1 records do not contain mode or result. Dates use the server's local timezone with UTC offset. This is not an unlimited audit log.</p>
-<p><strong>--pause</strong> <em>PROJECT</em>
-: Persist a maintenance pause. Waits for the project's current recovery lock, then prevents further automated recovery, including pending up retries. Without --duration, the pause lasts until resumed.</p>
-<p><strong>--duration</strong> <em>TIME</em>
-: Use with --pause. Examples: 60s, 15m, 2h, 1d. A timed pause can expire while maintenance is still in progress; prefer an indefinite pause for uncertain deployments.</p>
-<p><strong>--resume</strong> <em>PROJECT</em>
-: Remove pause, reset consecutive failures and schedule monitoring again. Does not clear the recovery limit or cancel pending up. A pending operation can resume.</p>
-<p><strong>--reset-limit</strong> <em>PROJECT</em>
-: Clear retained rate-limit timestamps and blocked state for the named project. Does not delete the detailed history or change the configured limit. Does not itself perform recovery.</p>
-<p><strong>--recover</strong> <em>PROJECT</em>
-: Request immediate recovery of a discovered project or pending operation. Honors pause and rate limit. Ordinary manual recovery bypasses the normal HTTP threshold and scheduling; pending up takes precedence and respects its cooldown. This is a mutating operation and may interrupt service.</p>
-<p><strong>--mode</strong> <em>MODE</em>
-: Select manual recovery mode with --recover: restart, down-up or force-recreate. Without it, manual recovery uses the effective project mode.</p>
-<p><strong>--dry-run</strong>
-: Simulate the daemon using isolated temporary state, without executing recovery commands, hooks or webhooks. The already running systemd daemon can still perform real recovery; stop it first for a fully non-mutating experiment. Administrative mutations are rejected in dry-run. Stop the simulation with Ctrl-C.</p>
-<p><strong>--once</strong>
-: Run one scheduler cycle and exit; startup grace or cooldown can defer checks. Without --dry-run, uses real persistent state and may recover projects. A concurrent real daemon using the same state directory is rejected.</p>
-<h1>RECOVERY MODES</h1>
-<p><strong>restart</strong> (default)
-: <code>docker compose restart</code>. Restarts existing containers, including stopped containers. Does not restore deleted containers or apply new Compose definitions.</p>
-<p><strong>force-recreate</strong>
-: <code>docker compose up -d --force-recreate</code>. Recreates containers and can restore missing containers. Writable container layers and dynamically assigned ports may change.</p>
-<p><strong>down-up</strong>
-: <code>docker compose down</code> followed by <code>docker compose up -d</code>. Removes and recreates containers and project networks. The up command is persisted before down; up is attempted even if down fails. If interrupted or unsuccessful, pending up is retried under cooldown and rate-limit rules even if all labelled containers are gone.</p>
-<p>None of these modes explicitly deletes volumes with -v. However, anonymous volumes may not be reattached after down, and writable container layers may be lost. Use named volumes or bind mounts for persistent data and maintain backups. Fixed published ports are advisable when AWS ALB targets refer to host ports. Compose may pull/build images according to the existing project configuration; the watchdog adds no explicit pull flag.</p>
-<p>Recovery uses the Compose name, directory and file list discovered from Docker. Custom --env-file, profiles and deployment-only environment variables are not automatically reconstructed. Test these projects with the same environment as the systemd service before enabling recovery.</p>
-<h2>Escalation</h2>
-<p>Set <code>recovery = restart,force-recreate,down-up</code> globally, or <code>watchdog.recovery</code> on a project. After an unsuccessful recovery and subsequent failed checks, the next mode is selected. The last mode repeats until healthy or limited. A healthy check resets escalation. A project-specific mode without a project-specific recovery sequence disables inherited escalation. Separate mode names with commas, without spaces.</p>
-<h1>CONFIGURATION</h1>
-<p>The INI file /etc/docker-watchdog/watchdog.conf uses section [watchdog]. All options below are optional; the defaults are shown. Unknown keys or invalid values are rejected. Time values are integer seconds. Boolean values accept true/false, yes/no or 1/0. Restart the service after changing this file:</p>
+<p>Use the actual application health path if available. No manual port
+configuration is required. The example project name is not necessarily
+the directory name; use the name returned by --list.</p>
+<h1 id="options">OPTIONS</h1>
+<dl>
+<dt><strong>--help</strong>, <strong>-h</strong></dt>
+<dd>
+Show command-line usage and exit.
+</dd>
+<dt><strong>--version</strong></dt>
+<dd>
+Print the program version and exit.
+</dd>
+<dt><strong>--config</strong> <em>PATH</em></dt>
+<dd>
+Read an alternative INI configuration. Default:
+/etc/docker-watchdog/watchdog.conf. Applies to daemon and CLI
+operations. Missing files use built-in defaults.
+</dd>
+<dt><strong>--state-dir</strong> <em>PATH</em></dt>
+<dd>
+Select persistent state directory; default /var/lib/docker-watchdog. Do
+not run two real daemons against the same Docker host with separate
+state directories.
+</dd>
+<dt><strong>--list</strong></dt>
+<dd>
+Discover current labelled projects and print legacy JSON Lines (one JSON
+object per project). Does not perform a health probe or recovery.
+Includes project name, directory, Compose files, scheme, path, host,
+endpoints and mode where available, plus a containers array. For
+multiple targets, project endpoints are combined and mode is multiple.
+</dd>
+<dt><strong>--table</strong></dt>
+<dd>
+With --list, display a human-readable table rather than JSON Lines.
+</dd>
+<dt><strong>--status</strong></dt>
+<dd>
+Show current discovered and retained project state, including
+project-level rate policy and per-container health, failure counts,
+method, mode and last observation. It reads saved results and current
+Docker metadata, not a live HTTP probe. Effective settings are
+calculated from the CLI configuration and current labels, so restart the
+daemon after changing configuration.
+</dd>
+<dt><strong>--json</strong></dt>
+<dd>
+With --list or --status, emit enriched JSON Lines including effective
+settings. With --history, emit a JSON object with dated history. Do not
+combine with --table or --raw.
+</dd>
+<dt><strong>--raw</strong></dt>
+<dd>
+With --status or --history, emit the legacy raw state schema, including
+Unix timestamps. Useful for older automation; v1.3 adds a targets map to
+the state schema.
+</dd>
+<dt><strong>--history</strong> <em>PROJECT</em></dt>
+<dd>
+Display up to 500 recorded recovery events with dates, modes, container
+names (for container actions) and results; also shows retained attempt
+timestamps. Older v1.1 records do not contain mode or result. Dates use
+the server's local timezone with UTC offset. This is not an unlimited
+audit log.
+</dd>
+<dt><strong>--pause</strong> <em>PROJECT</em></dt>
+<dd>
+Persist a maintenance pause. Waits for the project's current recovery
+lock, then prevents further automated recovery, including pending up
+retries. Without --duration, the pause lasts until resumed.
+</dd>
+<dt><strong>--duration</strong> <em>TIME</em></dt>
+<dd>
+Use with --pause. Examples: 60s, 15m, 2h, 1d. A timed pause can expire
+while maintenance is still in progress; prefer an indefinite pause for
+uncertain deployments.
+</dd>
+<dt><strong>--resume</strong> <em>PROJECT</em></dt>
+<dd>
+Remove pause, reset per-container consecutive failures and schedule
+monitoring again. Does not clear the recovery limit or cancel pending
+up. A pending operation can resume.
+</dd>
+<dt><strong>--reset-limit</strong> <em>PROJECT</em></dt>
+<dd>
+Clear retained rate-limit timestamps and blocked state for the named
+project. Does not delete the detailed history or change the configured
+limit. Does not itself perform recovery.
+</dd>
+<dt><strong>--recover</strong> <em>PROJECT</em></dt>
+<dd>
+Request immediate recovery of a discovered project, monitored container
+or pending operation. Honors pause and rate limit. Ordinary manual
+recovery bypasses the normal HTTP threshold and scheduling; pending up
+takes precedence and respects its cooldown. This is a mutating operation
+and may interrupt service.
+</dd>
+<dt><strong>--mode</strong> <em>MODE</em></dt>
+<dd>
+Select manual recovery mode with --recover: restart, down-up,
+force-recreate, container-restart or container-recreate. If omitted, a
+unique selected target supplies its effective mode. With multiple
+targets and no selector, specify a project-wide mode.
+</dd>
+<dt><strong>--container</strong> <em>TARGET</em></dt>
+<dd>
+Select a monitored container for --recover with a container mode.
+Accepts full Docker name, full ID, a unique Compose service name or
+service:number. Required for a container mode when more than one target
+exists. Does not narrow project-wide modes.
+</dd>
+<dt><strong>--dry-run</strong></dt>
+<dd>
+Simulate the daemon using isolated temporary state, without executing
+recovery commands, hooks or webhooks. The already running systemd daemon
+can still perform real recovery; stop it first for a fully non-mutating
+experiment. Administrative mutations are rejected in dry-run. Stop the
+simulation with Ctrl-C.
+</dd>
+<dt><strong>--once</strong></dt>
+<dd>
+Run one scheduler cycle and exit; startup grace, cooldown or independent
+scheduling can defer checks. Without --dry-run, uses real persistent
+state and may recover projects. A concurrent real daemon using the same
+state directory is rejected.
+</dd>
+</dl>
+<h1 id="check-methods">CHECK METHODS</h1>
+<dl>
+<dt><strong>http</strong> (default)</dt>
+<dd>
+HTTP or HTTPS to a published host binding. Running containers without a
+valid distinct published port produce a configuration error, not a
+restart. A stopped target counts as failed.
+</dd>
+<dt><strong>healthcheck</strong></dt>
+<dd>
+Use Docker inspect state. No published port required. The image or
+Compose service must define a Docker Healthcheck. Missing healthcheck is
+a configuration error.
+</dd>
+<dt><strong>both</strong></dt>
+<dd>
+Both Docker Healthcheck and HTTP must succeed. Wait while Docker health
+status is starting; when Docker reports healthy, check HTTP. A
+Docker-health failure uses healthcheck_failures (or failures if zero),
+while an HTTP failure uses failures.
+</dd>
+<dt><strong>auto</strong></dt>
+<dd>
+Prefer a configured Docker Healthcheck; otherwise use HTTP.
+</dd>
+</dl>
+<p>Docker healthy is success; unhealthy and stopped/dead targets are
+failures. Starting is not a failure and resets the failure streak.
+Docker's own retries, interval, timeout and start period run separately.
+A healthcheck_failures value of 1 means recovery at the first scheduled
+observation of unhealthy, not an immediate event-triggered action. A
+value of 0 inherits the normal failure threshold (3 by default).
+Configure the actual healthcheck inside the image or Compose service;
+the watchdog does not execute it itself.</p>
+<h1 id="recovery-modes">RECOVERY MODES</h1>
+<dl>
+<dt><strong>container-restart</strong></dt>
+<dd>
+<code>docker restart CONTAINER_ID</code>. Restarts exactly the selected
+existing monitored container, including a stopped container. Works with
+individual replicas.
+</dd>
+<dt><strong>container-recreate</strong></dt>
+<dd>
+<code>docker compose up -d --no-deps --force-recreate -- SERVICE</code>.
+Recreates only the selected service. To avoid recreating other replicas,
+requires exactly one existing service container and a service configured
+for one replica. Checks live count and Compose configuration before
+execution. Scaled services are rejected; use container-restart for a
+specific replica. External Compose operations can race with this check;
+pause the project for maintenance.
+</dd>
+<dt><strong>restart</strong> (default)</dt>
+<dd>
+<code>docker compose restart</code>. Restarts existing containers,
+including stopped containers. Does not restore deleted containers or
+apply new Compose definitions.
+</dd>
+<dt><strong>force-recreate</strong></dt>
+<dd>
+<code>docker compose up -d --force-recreate</code>. Recreates containers
+and can restore missing containers. Writable container layers and
+dynamically assigned ports may change.
+</dd>
+<dt><strong>down-up</strong></dt>
+<dd>
+<code>docker compose down</code> followed by
+<code>docker compose up -d</code>. Removes and recreates containers and
+project networks. The up command is persisted before down; up is
+attempted even if down fails. If interrupted or unsuccessful, pending up
+is retried under cooldown and rate-limit rules even if all labelled
+containers are gone.
+</dd>
+</dl>
+<p>None of these modes explicitly deletes volumes with -v. However,
+anonymous volumes may not be reattached after down, and writable
+container layers may be lost. Use named volumes or bind mounts for
+persistent data and maintain backups. Fixed published ports are
+advisable when AWS ALB targets refer to host ports. Compose may
+pull/build images according to the existing project configuration; the
+watchdog adds no explicit pull flag.</p>
+<p>Recovery uses the Compose name, directory and file list discovered
+from Docker. Custom --env-file, profiles and deployment-only environment
+variables are not automatically reconstructed. Test these projects with
+the same environment as the systemd service before enabling
+recovery.</p>
+<h2 id="escalation">Escalation</h2>
+<p>Set
+<code>recovery = container-restart,container-recreate,restart,force-recreate,down-up</code>
+globally, or <code>watchdog.recovery</code> on a monitored service. Omit
+container-recreate for scaled services. After an unsuccessful recovery
+and subsequent failed checks, the next mode is selected. The last mode
+repeats until healthy or limited. A healthy check resets that target's
+escalation. A target-specific mode without a target-specific recovery
+sequence disables inherited escalation. Group promotion can override a
+selected step. Separate mode names with commas, without spaces.</p>
+<h1 id="multi-container-coordination">MULTI-CONTAINER COORDINATION</h1>
+<p>Each monitored container is identified by Compose service and replica
+number (service:number). Counters and scheduling are independent. One
+project lock prevents simultaneous or duplicated recovery operations by
+this daemon, and all due probes are evaluated before selecting an
+action. When any target reaches its individual failure threshold and at
+least project_failure_threshold targets are confirmed failed, recover
+the entire project once using project_recovery_mode. Previously observed
+failures are reconfirmed before promotion without incrementing the
+scheduled counters. A threshold of zero disables promotion. Otherwise a
+ready project-wide action takes precedence over a ready container-level
+action. Project recovery resets counters of affected targets and starts
+a shared project cooldown. A container recovery resets only its own
+counter and cooldown; other targets remain eligible. Shared project
+limits still apply. External Compose actions are not atomically
+coordinated: use pause/resume for maintenance.</p>
+<p>Explicit project-wide labels for project_failure_threshold and
+project_recovery_mode may appear on any monitored service and must agree
+if repeated. Other check/recovery settings may differ between targets.
+All recovery attempts share one project rate history, using the smallest
+positive effective max_restarts (zero if all targets are unlimited), the
+largest effective window, and the largest effective cooldown/command
+timeout for project-wide recovery. To disable the shared limit, set all
+effective max_restarts values to zero. This prevents multiple targets
+bypassing the limit. Project-level conflicts are configuration errors; a
+malformed check-specific target does not silence another valid
+target.</p>
+<h1 id="configuration">CONFIGURATION</h1>
+<p>The INI file /etc/docker-watchdog/watchdog.conf uses section
+[watchdog]. All options below are optional; the defaults are shown.
+Unknown keys or invalid values are rejected. Time values are integer
+seconds. Boolean values accept true/false, yes/no or 1/0. Restart the
+service after changing this file:</p>
 <pre><code>sudo systemctl restart docker-watchdog</code></pre>
-<p><strong>interval = 60</strong>
-: Seconds between scheduled check starts (positive).</p>
-<p><strong>failures = 3</strong>
-: Consecutive failed checks before recovery (positive).</p>
-<p><strong>cooldown = 120</strong>
-: Seconds after recovery before another check or retry; zero disables the delay.</p>
-<p><strong>max_restarts = 3</strong>
-: Maximum attempts per rolling window. Zero means unlimited, not disabled. Cooldown still applies. Failed recovery attempts consume the limit. Unlimited retries can repeatedly interrupt a broken application; use notifications and monitor failures.</p>
-<p><strong>window = 3600</strong>
-: Positive rate-limit window in seconds. History survives daemon and host restarts. When exhausted, recovery is deferred until an attempt ages out, or the limit is reset explicitly.</p>
-<p><strong>http_timeout = 5</strong>
-: Positive HTTP timeout per published address, in seconds.</p>
-<p><strong>command_timeout = 180</strong>
-: Positive timeout per Docker Compose command, in seconds.</p>
-<p><strong>workers = 32</strong>
-: Positive maximum number of concurrent project workers.</p>
-<p><strong>mode = restart</strong>
-: Default recovery mode (see RECOVERY MODES).</p>
-<p><strong>recovery =</strong>
-: Optional comma-separated recovery sequence. Empty disables escalation.</p>
-<p><strong>startup_grace = 60</strong>
-: Seconds of grace after discovering a new container or changed start timestamp. Zero disables grace. Protects slow-starting running containers, not an indefinitely stopped container.</p>
-<p><strong>dry_run = false</strong>
-: Simulate recovery without Docker mutations. See --dry-run.</p>
-<p><strong>log_level = INFO</strong>
-: DEBUG, INFO, WARNING or ERROR.</p>
-<p><strong>log_success = true</strong>
-: When false, log transitions to healthy rather than every successful HTTP check.</p>
-<p><strong>summary_interval = 600</strong>
-: Seconds between summary messages; zero disables them.</p>
-<p><strong>docker_events = true</strong>
-: Subscribe to Docker events to wake discovery. Periodic polling remains available.</p>
-<p><strong>webhook_url =</strong>
-: Optional HTTPS endpoint receiving generic JSON recovery notifications. Empty disables notifications.</p>
-<p><strong>metrics_port = 0</strong>
-: Local Prometheus HTTP port (1 to 65535); zero disables the metrics server.</p>
-<p><strong>pre_hook =</strong>, <strong>post_hook =</strong>
-: Optional absolute executable paths to trusted administrator-managed hooks. Empty disables them.</p>
-<p><strong>hook_timeout = 30</strong>
-: Positive timeout in seconds for each hook.</p>
-<h1>DOCKER LABELS</h1>
-<p>Place labels on the single service that publishes the HTTP port, not on the database or a deploy-only label section. Apply changes with docker compose up -d. Quote YAML values as strings.</p>
-<p><strong>watchdog.enabled</strong>
-: Set to &quot;true&quot; to opt in. Discovery includes stopped containers bearing this label.</p>
-<p><strong>watchdog.path</strong>
-: HTTP request path; defaults to /. Must start with a single slash.</p>
-<p><strong>watchdog.scheme</strong>
-: http (default) or https.</p>
-<p><strong>watchdog.host</strong>
-: Optional HTTP Host header for virtual hosts. Does not override certificate hostname verification or TLS SNI.</p>
-<p><strong>watchdog.mode</strong>, <strong>watchdog.recovery</strong>, <strong>watchdog.interval</strong>, <strong>watchdog.failures</strong>, <strong>watchdog.cooldown</strong>, <strong>watchdog.max_restarts</strong>, <strong>watchdog.window</strong>, <strong>watchdog.http_timeout</strong>, <strong>watchdog.command_timeout</strong>, <strong>watchdog.startup_grace</strong>
-: Override the corresponding global options. All labelled containers belonging to a project must have consistent overrides. Global logging, worker count, hooks, metrics, webhook and dry-run settings cannot be set through labels.</p>
-<p>Example of a project with unlimited attempts and escalation:</p>
+<dl>
+<dt><strong>interval = 60</strong></dt>
+<dd>
+Seconds between scheduled check starts (positive).
+</dd>
+<dt><strong>failures = 3</strong></dt>
+<dd>
+Consecutive failed checks before recovery (positive).
+</dd>
+<dt><strong>cooldown = 120</strong></dt>
+<dd>
+Seconds after recovery before another check or retry; zero disables the
+delay. Container cooldown is target-local, project recovery cooldown is
+shared.
+</dd>
+<dt><strong>max_restarts = 3</strong></dt>
+<dd>
+Maximum attempts per shared project rolling window (container and
+project attempts combined). Zero means unlimited, not disabled. Cooldown
+still applies. Failed recovery attempts consume the limit. Unlimited
+retries can repeatedly interrupt a broken application; use notifications
+and monitor failures.
+</dd>
+<dt><strong>window = 3600</strong></dt>
+<dd>
+Positive rate-limit window in seconds. History survives daemon and host
+restarts. When exhausted, recovery is deferred until an attempt ages
+out, or the limit is reset explicitly.
+</dd>
+<dt><strong>http_timeout = 5</strong></dt>
+<dd>
+Positive HTTP timeout per published address, in seconds.
+</dd>
+<dt><strong>command_timeout = 180</strong></dt>
+<dd>
+Positive timeout per Docker Compose command, in seconds.
+</dd>
+<dt><strong>workers = 32</strong></dt>
+<dd>
+Positive maximum number of concurrent project workers.
+</dd>
+<dt><strong>mode = restart</strong></dt>
+<dd>
+Default recovery mode (see RECOVERY MODES).
+</dd>
+<dt><strong>recovery =</strong></dt>
+<dd>
+Optional comma-separated recovery sequence. Empty disables escalation.
+</dd>
+<dt><strong>startup_grace = 60</strong></dt>
+<dd>
+Seconds of grace after discovering a new container or changed start
+timestamp. Zero disables grace. Protects slow-starting running
+containers, not an indefinitely stopped container.
+</dd>
+<dt><strong>dry_run = false</strong></dt>
+<dd>
+Simulate recovery without Docker mutations. See --dry-run.
+</dd>
+<dt><strong>log_level = INFO</strong></dt>
+<dd>
+DEBUG, INFO, WARNING or ERROR.
+</dd>
+<dt><strong>log_success = true</strong></dt>
+<dd>
+When false, log transitions to healthy rather than every successful
+check.
+</dd>
+<dt><strong>summary_interval = 600</strong></dt>
+<dd>
+Seconds between summary messages; zero disables them.
+</dd>
+<dt><strong>docker_events = true</strong></dt>
+<dd>
+Subscribe to Docker events to wake discovery. Periodic polling remains
+available.
+</dd>
+<dt><strong>webhook_url =</strong></dt>
+<dd>
+Optional HTTPS endpoint receiving generic JSON recovery notifications.
+Empty disables notifications.
+</dd>
+<dt><strong>metrics_port = 0</strong></dt>
+<dd>
+Local Prometheus HTTP port (1 to 65535); zero disables the metrics
+server.
+</dd>
+<dt><strong>pre_hook =</strong>, <strong>post_hook =</strong></dt>
+<dd>
+Optional absolute executable paths to trusted administrator-managed
+hooks. Empty disables them.
+</dd>
+<dt><strong>hook_timeout = 30</strong></dt>
+<dd>
+Positive timeout in seconds for each hook.
+</dd>
+<dt><strong>check = http</strong></dt>
+<dd>
+Check method: http, healthcheck, both or auto. See CHECK METHODS.
+</dd>
+<dt><strong>healthcheck_failures = 0</strong></dt>
+<dd>
+Docker-health failure threshold; zero inherits failures, one recovers at
+the first observed unhealthy or stopped status. HTTP failures retain the
+normal threshold.
+</dd>
+<dt><strong>project_failure_threshold = 2</strong></dt>
+<dd>
+Number of confirmed failed targets needed to promote one threshold-ready
+recovery to a project-wide action. Zero disables promotion.
+</dd>
+<dt><strong>project_recovery_mode = restart</strong></dt>
+<dd>
+Whole-project mode used for promoted recovery: restart, force-recreate
+or down-up.
+</dd>
+</dl>
+<h1 id="docker-labels">DOCKER LABELS</h1>
+<p>Place labels on each monitored service in its container labels, not a
+deploy-only label section. Private database or worker services can use
+Docker Healthcheck without publishing a port. Apply changes with docker
+compose up -d. Quote YAML values as strings.</p>
+<dl>
+<dt><strong>watchdog.enabled</strong></dt>
+<dd>
+Set to "true" to opt in. Discovery includes stopped containers bearing
+this label.
+</dd>
+<dt><strong>watchdog.path</strong></dt>
+<dd>
+HTTP request path; defaults to /. Must start with a single slash.
+</dd>
+<dt><strong>watchdog.scheme</strong></dt>
+<dd>
+http (default) or https.
+</dd>
+<dt><strong>watchdog.host</strong></dt>
+<dd>
+Optional HTTP Host header for virtual hosts. Does not override
+certificate hostname verification or TLS SNI.
+</dd>
+<dt><strong>watchdog.mode</strong>, <strong>watchdog.recovery</strong>,
+<strong>watchdog.interval</strong>, <strong>watchdog.failures</strong>,
+<strong>watchdog.cooldown</strong>,
+<strong>watchdog.max_restarts</strong>,
+<strong>watchdog.window</strong>,
+<strong>watchdog.http_timeout</strong>,
+<strong>watchdog.command_timeout</strong>,
+<strong>watchdog.startup_grace</strong>,
+<strong>watchdog.check</strong>,
+<strong>watchdog.healthcheck_failures</strong>,
+<strong>watchdog.project_failure_threshold</strong>,
+<strong>watchdog.project_recovery_mode</strong></dt>
+<dd>
+Override the corresponding global options. Check/recovery overrides may
+differ per target; explicit project-wide promotion labels must agree if
+repeated. See MULTI-CONTAINER COORDINATION for the shared rate policy.
+Global logging, worker count, hooks, metrics, webhook and dry-run
+settings cannot be set through labels.
+</dd>
+</dl>
+<p>Example of a target with unlimited attempts and escalation (all
+effective target limits must be zero for the whole project to be
+unlimited):</p>
 <pre><code>labels:
   watchdog.enabled: &quot;true&quot;
   watchdog.path: &quot;/health&quot;
   watchdog.host: &quot;app.example.com&quot;
-  watchdog.recovery: &quot;restart,force-recreate,down-up&quot;
+  watchdog.recovery: &quot;container-restart,restart,force-recreate,down-up&quot;
   watchdog.max_restarts: &quot;0&quot;
   watchdog.startup_grace: &quot;180&quot;</code></pre>
-<h1>MAINTENANCE AND SAFE TESTING</h1>
+<p>Example of a private worker with its own healthcheck and immediate
+response to Docker unhealthy at the next scheduled check:</p>
+<pre><code>services:
+  worker:
+    image: alpine:3.22
+    command: [&quot;sh&quot;, &quot;-c&quot;, &quot;exec sleep infinity&quot;]
+    healthcheck:
+      test: [&quot;CMD-SHELL&quot;, &quot;test ! -f /tmp/watchdog-fail&quot;]
+      interval: 30s
+      retries: 3
+    labels:
+      watchdog.enabled: &quot;true&quot;
+      watchdog.check: &quot;healthcheck&quot;
+      watchdog.healthcheck_failures: &quot;1&quot;
+      watchdog.mode: &quot;container-restart&quot;</code></pre>
+<p>This is a disposable demonstration. Use a real application
+healthcheck in production. A local-only browser configurator is
+available at
+https://bursh.github.io/docker-watchdog/configurator.html.</p>
+<h1 id="maintenance-and-safe-testing">MAINTENANCE AND SAFE TESTING</h1>
 <p>Use the exact project name from --list. For a planned deployment:</p>
 <pre><code>sudo docker-watchdog --pause myproject
 cd /opt/myproject
@@ -155,69 +534,172 @@ docker compose down
 docker compose pull
 docker compose up -d
 sudo docker-watchdog --resume myproject</code></pre>
-<p>Resume only after maintenance is complete; do not resume blindly after a failed deployment. Pauses survive daemon restarts. A manual compose down normally removes a project from discovery, while compose stop leaves it monitored and may cause recovery. Manual up restores discovery. A pending watchdog down-up operation can still recreate a removed project; pause before maintenance. Re-discovery immediately before recovery reduces races, but cannot atomically coordinate unrelated external Docker commands.</p>
+<p>Resume only after maintenance is complete; do not resume blindly
+after a failed deployment. Pauses survive daemon restarts. A manual
+compose down normally removes a project from discovery, while compose
+stop leaves it monitored and may cause recovery. Manual up restores
+discovery. A pending watchdog down-up operation can still recreate a
+removed project; pause before maintenance. Re-discovery immediately
+before recovery reduces races, but cannot atomically coordinate
+unrelated external Docker commands.</p>
 <p>To test without actual recovery:</p>
 <pre><code>sudo systemctl stop docker-watchdog
 sudo docker-watchdog --dry-run</code></pre>
 <p>Stop with Ctrl-C, then restart the service when ready:</p>
 <pre><code>sudo systemctl start docker-watchdog</code></pre>
-<p>For a single simulated scheduler cycle use --dry-run --once. It may only establish startup grace rather than run a probe. Test actual recovery only on an isolated or approved staging project. Stop a labelled web service with docker compose stop SERVICE, observe consecutive failures and recovery, then verify application and database functionality. Restore manually if the test fails.</p>
-<h1>STATUS AND OBSERVABILITY</h1>
-<p>Status values include HEALTHY (last probe succeeded), FAILED (last probe failed), STARTING (grace period), COOLDOWN (post-recovery delay), PAUSED (maintenance), BLOCKED (rate limit), PENDING-UP (unfinished recovery), REMOVED (retained but no longer discovered), CONFIG-ERROR (invalid target), and UNKNOWN (no saved observation). These are snapshots, not proof of external uptime. A dash indicates unavailable data.</p>
+<p>For a single simulated scheduler cycle use --dry-run --once. It may
+only establish startup grace rather than run a probe. Test actual
+recovery only on an isolated or approved staging project. Stop a
+labelled web service with docker compose stop SERVICE, observe
+consecutive failures and recovery, then verify application and database
+functionality. Restore manually if the test fails.</p>
+<h1 id="status-and-observability">STATUS AND OBSERVABILITY</h1>
+<p>Status values include HEALTHY (last probe succeeded), FAILED (last
+probe failed), STARTING (grace period), COOLDOWN (post-recovery delay),
+PAUSED (maintenance), BLOCKED (rate limit), PENDING-UP (unfinished
+recovery), REMOVED (retained but no longer discovered), CONFIG-ERROR
+(invalid target), and UNKNOWN (no saved observation). These are
+snapshots, not proof of external uptime. A dash indicates unavailable
+data.</p>
 <p>Useful commands:</p>
 <pre><code>sudo docker-watchdog --status
 sudo docker-watchdog --list --table
 sudo docker-watchdog --status --json
 sudo docker-watchdog --history myproject
+sudo docker-watchdog --recover myproject --mode container-restart --container worker
 sudo journalctl -u docker-watchdog -n 100 --no-pager
 sudo journalctl -u docker-watchdog -f</code></pre>
 <p>With jq installed, inspect effective options:</p>
-<pre><code>sudo docker-watchdog --status --json | jq '.effective_options'</code></pre>
-<p>Logs report HTTP status, endpoint, duration, exceptions, recovery mode and result, discovery changes and Docker Events connection lifecycle. A 302 response is considered healthy but may mask a failed destination. Select a health endpoint that checks application dependencies if necessary. Docker Events startup is distinct from confirmation by a received event; polling continues if the stream fails.</p>
-<h2>Metrics</h2>
-<p>Set metrics_port = 9109 and restart the service. The metrics server listens on 127.0.0.1 only.</p>
+<pre><code>sudo docker-watchdog --status --json | jq &#39;.effective_options&#39;</code></pre>
+<p>Logs report per-target identity (PROJECT/SERVICE:NUMBER), HTTP
+status, Docker health, endpoint, duration, exceptions, recovery mode and
+result, discovery changes and Docker Events connection lifecycle. A 302
+response is considered healthy but may mask a failed destination. Select
+a health endpoint that checks application dependencies if necessary.
+Docker Events startup is distinct from confirmation by a received event;
+polling continues if the stream fails.</p>
+<h2 id="metrics">Metrics</h2>
+<p>Set metrics_port = 9109 and restart the service. The metrics server
+listens on 127.0.0.1 only.</p>
 <pre><code>curl http://127.0.0.1:9109/metrics</code></pre>
-<p>Metrics include docker_watchdog_failures, docker_watchdog_retained_restart_attempts, docker_watchdog_paused and docker_watchdog_last_check_timestamp_seconds. They reflect saved state, including removed projects. The retained-attempt count is not a lifetime total. Configure a local Prometheus scraper or a suitably protected relay; the endpoint has no built-in remote authentication.</p>
-<h2>Webhooks and hooks</h2>
-<p>An HTTPS webhook receives JSON containing project, event and mode for completed or failed ordinary recovery. Use a relay to convert to Slack, Teams or Telegram formats. Webhook failures do not change the recovery result. Pending up retries do not currently invoke hooks or webhook notifications.</p>
-<p>Pre/post hooks receive three arguments: PROJECT MODE RESULT. RESULT is empty for the pre-hook; the post-hook receives the recorded result. A failed pre-hook cancels recovery; post-hook errors are logged. Hooks run with the service's privileges (normally root). Only use trusted absolute executable paths in administrator-controlled locations. Hooks are not configurable via labels.</p>
-<h1>TROUBLESHOOTING</h1>
-<p>No projects listed: check that Docker is running, that the service has the actual container label, and that Compose changes have been applied:</p>
+<p>Metrics include docker_watchdog_failures (maximum target counter),
+docker_watchdog_retained_restart_attempts, docker_watchdog_paused,
+docker_watchdog_last_check_timestamp_seconds and
+docker_watchdog_container_failures labelled by project and container
+key. They reflect saved state, including removed projects. The
+retained-attempt count is not a lifetime total. Configure a local
+Prometheus scraper or a suitably protected relay; the endpoint has no
+built-in remote authentication.</p>
+<h2 id="webhooks-and-hooks">Webhooks and hooks</h2>
+<p>An HTTPS webhook receives JSON containing project, event and mode for
+completed or failed ordinary recovery, plus container for
+container-level recovery. Use a relay to convert to Slack, Teams or
+Telegram formats. Webhook failures do not change the recovery result.
+Pending up retries do not currently invoke hooks or webhook
+notifications.</p>
+<p>Pre/post hooks receive three arguments: PROJECT MODE RESULT. RESULT
+is empty for the pre-hook; the post-hook receives the recorded result. A
+failed pre-hook cancels recovery; post-hook errors are logged. Hooks run
+with the service's privileges (normally root). Only use trusted absolute
+executable paths in administrator-controlled locations. Hooks are not
+configurable via labels.</p>
+<h1 id="troubleshooting">TROUBLESHOOTING</h1>
+<p>No projects listed: check that Docker is running, that the service
+has the actual container label, and that Compose changes have been
+applied:</p>
 <pre><code>docker ps -a --filter label=watchdog.enabled=true
 docker compose config
 sudo docker-watchdog --list</code></pre>
-<p>Service does not start: inspect the service and journal, verify Python, Docker Compose V2 and configuration syntax:</p>
+<p>Service does not start: inspect the service and journal, verify
+Python, Docker Compose V2 and configuration syntax:</p>
 <pre><code>systemctl status docker-watchdog --no-pager -l
 journalctl -u docker-watchdog -n 100 --no-pager
 docker compose version</code></pre>
-<p>HTTP failure: test the discovered endpoint locally, using the correct Host header if necessary:</p>
+<p>HTTP failure: test the discovered endpoint locally, using the correct
+Host header if necessary:</p>
 <pre><code>curl -v --max-time 5 http://127.0.0.1:9017/
-curl -v -H 'Host: app.example.com' http://127.0.0.1:9017/</code></pre>
-<p>Limit reached: inspect --status and --history. Fix the application or wait until the rolling limit expires. Use --reset-limit only after investigating the cause. If a project requires unlimited attempts, explicitly set max_restarts = 0 or its label override.</p>
-<p>Project has multiple ports: put the watchdog label only on the web service and ensure that service has exactly one distinct published TCP port. A database port on a different unlabelled service is not included in the HTTP target.</p>
-<p>Unexpected recovery during maintenance: use --pause before modifying containers. A pending up persists across restarts and can survive manual down; pausing suspends it but does not cancel it. For permanent removal with pending recovery, stop the daemon, remove the project's containers/labels, back up state and inspect the corresponding project JSON before removing only that project's pending state. Do not edit live state files.</p>
-<h1>FILES</h1>
-<p><strong>/usr/bin/docker-watchdog</strong>
-: Executable.</p>
-<p><strong>/etc/docker-watchdog/watchdog.conf</strong>
-: Administrator configuration (dpkg conffile). Upgrades may prompt about locally modified settings.</p>
-<p><strong>/usr/share/doc/docker-watchdog/watchdog.conf.example</strong>
-: Fully commented configuration template; compare and merge after upgrades.</p>
-<p><strong>/var/lib/docker-watchdog/</strong>
-: Persistent project JSON state, pause markers and locks. Do not edit while running. Package removal and purge deliberately retain state. Back up before manual changes.</p>
-<p><strong>/lib/systemd/system/docker-watchdog.service</strong>
-: Packaged systemd unit (may resolve under /usr/lib on merged-/usr systems). A manual unit in /etc/systemd/system can override it.</p>
-<p><strong>/usr/share/doc/docker-watchdog/README.md</strong>
-: Additional installation, build and APT repository documentation.</p>
-<h1>SERVICE ADMINISTRATION</h1>
+curl -v -H &#39;Host: app.example.com&#39; http://127.0.0.1:9017/</code></pre>
+<p>Limit reached: inspect --status and --history. Fix the application or
+wait until the rolling limit expires. Use --reset-limit only after
+investigating the cause. If a project requires unlimited attempts,
+explicitly set max_restarts = 0 or its label override.</p>
+<p>Target has multiple ports: ensure each HTTP target has exactly one
+distinct published TCP host port, or use Docker Healthcheck for that
+target. Ports on other containers are not included in its HTTP check.
+Missing healthcheck: define one in Compose or use HTTP/auto. Container
+recreate refused: check configured and existing service replica count;
+use container-restart to restart an individual replica.</p>
+<p>Unexpected recovery during maintenance: use --pause before modifying
+containers. A pending up persists across restarts and can survive manual
+down; pausing suspends it but does not cancel it. For permanent removal
+with pending recovery, stop the daemon, remove the project's
+containers/labels, back up state and inspect the corresponding project
+JSON before removing only that project's pending state. Do not edit live
+state files.</p>
+<h1 id="files">FILES</h1>
+<dl>
+<dt><strong>/usr/bin/docker-watchdog</strong></dt>
+<dd>
+Executable.
+</dd>
+<dt><strong>/etc/docker-watchdog/watchdog.conf</strong></dt>
+<dd>
+Administrator configuration (dpkg conffile, RPM config(noreplace)).
+Upgrades may prompt about changes or create an .rpmnew file.
+</dd>
+<dt><strong>/usr/share/doc/docker-watchdog/watchdog.conf.example</strong></dt>
+<dd>
+Fully commented configuration template; compare and merge after
+upgrades.
+</dd>
+<dt><strong>/var/lib/docker-watchdog/</strong></dt>
+<dd>
+Persistent project JSON state, pause markers and locks. Do not edit
+while running. Package removal and purge deliberately retain state. Back
+up before manual changes.
+</dd>
+<dt><strong>/lib/systemd/system/docker-watchdog.service</strong></dt>
+<dd>
+Packaged systemd unit (may resolve under /usr/lib on merged-/usr
+systems). A manual unit in /etc/systemd/system can override it.
+</dd>
+<dt><strong>/usr/share/doc/docker-watchdog/README.md</strong></dt>
+<dd>
+Additional installation, build, APT and RPM repository documentation.
+</dd>
+</dl>
+<h1 id="service-administration">SERVICE ADMINISTRATION</h1>
 <pre><code>sudo systemctl enable --now docker-watchdog
 sudo systemctl restart docker-watchdog
 sudo systemctl stop docker-watchdog
-sudo apt remove docker-watchdog</code></pre>
-<p>To upgrade, install the newer local DEB or use a configured trusted APT repository. The package does not require Docker installation as an APT dependency, so install Docker Engine and Compose V2 independently. Removing the watchdog does not remove Compose containers. The package is not itself signed unless distributed via a separately configured signed repository.</p>
-<h1>SECURITY AND LIMITATIONS</h1>
-<p>Docker access is effectively privileged host access. Run only against trusted Compose projects and protect their files, labels, hooks and state directory. The watchdog does not perform external ALB health checks or update ALB target registrations. It cannot reconstruct arbitrary original deployment environment or guarantee race-free interaction with independent Compose commands. State uses wall-clock timestamps; major clock changes can affect scheduling and limits. Verify new versions on staging before enabling automated recovery in production.</p>
-<h1>SEE ALSO</h1>
-<p><strong>systemctl</strong>(1), <strong>journalctl</strong>(1), <strong>apt</strong>(8), <strong>docker</strong>(1), <strong>man</strong>(1).</p>
-<p>Use <code>docker compose --help</code> for Compose-specific documentation and <code>docker-watchdog --help</code> for a concise option summary.</p>
+sudo apt remove docker-watchdog
+# Or on an RPM host:
+sudo dnf remove docker-watchdog</code></pre>
+<p>To upgrade, install the newer local DEB/RPM or use a configured
+trusted APT/DNF repository. Back up /etc/docker-watchdog and
+/var/lib/docker-watchdog first. State from v1.2.x migrates with rate
+history, pauses and pending up retained; new target counters are
+initialized. Downgrading requires restoring a compatible state backup.
+The package does not require Docker installation as an APT dependency,
+so install Docker Engine and Compose V2 independently. Removing the
+watchdog does not remove Compose containers. The package is not itself
+signed unless distributed via a separately configured signed
+repository.</p>
+<h1 id="security-and-limitations">SECURITY AND LIMITATIONS</h1>
+<p>Docker access is effectively privileged host access. Run only against
+trusted Compose projects and protect their files, labels, hooks and
+state directory. The watchdog does not perform external ALB health
+checks or update ALB target registrations. It cannot reconstruct
+arbitrary original deployment environment or guarantee race-free
+interaction with independent Compose commands. State uses wall-clock
+timestamps; major clock changes can affect scheduling and limits. Verify
+new versions on staging before enabling automated recovery in
+production.</p>
+<h1 id="see-also">SEE ALSO</h1>
+<p><strong>systemctl</strong>(1), <strong>journalctl</strong>(1),
+<strong>apt</strong>(8), <strong>dnf</strong>(8),
+<strong>docker</strong>(1), <strong>man</strong>(1).</p>
+<p>Use <code>docker compose --help</code> for Compose-specific
+documentation and <code>docker-watchdog --help</code> for a concise
+option summary.</p>
 </section></main><footer>Docker Watchdog · Apache-2.0 · <a href="https://github.com/bursh/docker-watchdog/issues">Issues and feedback</a></footer></body></html>

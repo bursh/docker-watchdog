@@ -1,4 +1,4 @@
-# Disposable example; do not use this as a production health endpoint.
+# Disposable example; use real application-specific healthchecks in production.
 services:
   web:
     image: nginx:alpine
@@ -6,6 +6,22 @@ services:
       - "127.0.0.1:18080:80"
     labels:
       watchdog.enabled: "true"
+      watchdog.check: "http"
       watchdog.path: "/"
-      watchdog.mode: "restart"
-      watchdog.max_restarts: "3"
+      watchdog.mode: "container-restart"
+      watchdog.project_failure_threshold: "2"
+      watchdog.project_recovery_mode: "restart"
+  worker:
+    image: alpine:3.22
+    command: ["sh", "-c", "rm -f /tmp/watchdog-fail; exec sleep infinity"]
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/watchdog-fail"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      watchdog.enabled: "true"
+      watchdog.check: "healthcheck"
+      watchdog.healthcheck_failures: "1"
+      watchdog.mode: "container-restart"
