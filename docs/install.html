@@ -1,34 +1,169 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog documentation: automatic recovery of Docker Compose projects on Linux."><title>Installation | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>OPEN SOURCE / APACHE-2.0 / v1.2.2</small><h1>Installation</h1><p>Centralized HTTP monitoring and automatic recovery for Docker Compose on Linux.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h1>Installation guide</h1>
-<h2>Requirements</h2>
-<p>A Linux host with systemd, Python 3.7 or newer, CA certificates, local Docker Engine and Docker Compose V2. Install Docker using the instructions for your distribution from <a href="https://docs.docker.com/engine/install/">Docker documentation</a>. Verify <code>docker info</code> and <code>docker compose version</code> as the service user (root). Do not install a second conflicting Docker distribution.</p>
-<h2>Debian and Ubuntu (including compatible ARM64 systems)</h2>
-<p>Download the <code>.deb</code> and <code>SHA256SUMS</code> for the desired version from <a href="https://github.com/bursh/docker-watchdog/releases">GitHub Releases</a>, when available. In the download directory verify the checksum, then install:</p>
-<pre><code class="language-sh">sha256sum -c SHA256SUMS
-sudo apt install ./docker-watchdog_1.2.2-1_all.deb
-sudo systemctl status docker-watchdog
-</code></pre>
-<p>The package is architecture-independent; Docker and Python must support the host architecture. Raspberry Pi OS 64-bit is a candidate, not a tested platform. If no release asset is available, clone the repository, check out <code>v1.2.2</code> and run <code>bash build-deb.sh</code> with Python and <code>dpkg-deb</code> installed. The DEB is unsigned; checksums detect corruption, not a compromised publisher. A signed APT repository is optional and is not currently deployed.</p>
-<h2>Fedora, RHEL-family, Amazon Linux 2023 and Arch Linux</h2>
-<p>Manual installation is intended for compatible systemd hosts; these distributions have not been integration-tested. Install Python 3, CA certificates, Git and man-page tooling from your distribution. For Fedora/RHEL-family/Amazon Linux use <code>dnf</code> (package names can vary); for Arch use <code>pacman</code>. Docker Engine and Compose V2 must already work. No RPM or Arch package is provided.</p>
-<pre><code class="language-sh">git clone https://github.com/bursh/docker-watchdog.git
-cd docker-watchdog
-git checkout v1.2.2
-sudo install -m 0755 watchdog.py /usr/local/bin/docker-watchdog
-sudo install -d -m 0755 /etc/docker-watchdog
-# Keep an existing local configuration intact.
-sudo test -e /etc/docker-watchdog/watchdog.conf || sudo install -m 0644 watchdog.conf /etc/docker-watchdog/watchdog.conf
-sudo install -d -m 0755 /usr/local/share/man/man1
-sudo install -m 0644 docs/docker-watchdog.1 /usr/local/share/man/man1/docker-watchdog.1
-sed 's|ExecStart=/usr/bin/docker-watchdog|ExecStart=/usr/local/bin/docker-watchdog|' docker-watchdog.service | sudo tee /etc/systemd/system/docker-watchdog.service &gt;/dev/null
-sudo systemctl daemon-reload
-sudo systemctl enable --now docker-watchdog
-</code></pre>
-<p>For manual upgrades, stop the service first, replace the executable and unit, preserve configuration/state, reload systemd and start again. For manual removal disable and stop the service, remove the installed executable, unit and manual, then reload systemd. Keep <code>/etc/docker-watchdog</code> and <code>/var/lib/docker-watchdog</code> unless you intentionally want to delete configuration and recovery history. Remove a manual override before migrating to a DEB.</p>
-<h2>First project and verification</h2>
-<p>Add <code>watchdog.enabled: &quot;true&quot;</code> to exactly one existing published HTTP service. Use <code>watchdog.path</code> for a meaningful health endpoint and fixed ports for ALB. Apply the Compose file and run <code>sudo docker-watchdog --list --table</code>, <code>sudo docker-watchdog --status</code>, and <code>sudo journalctl -u docker-watchdog -f</code>.</p>
-<p>For safe testing, stop the installed daemon before running <code>sudo docker-watchdog --dry-run</code>; otherwise the real daemon can still recover containers. Use <code>--pause PROJECT</code> before planned changes and <code>--resume PROJECT</code> afterward.</p>
-<h2>Unsupported targets</h2>
-<p>Native Windows and macOS are not supported. Containerized Watchdog, Docker Desktop, rootless Docker, WSL, remote Docker contexts and non-systemd service management have not been validated. Use a dedicated Linux VM with a locally running Docker Engine if appropriate.</p>
-<p>See the <a href="manual.html">manual</a> for full options, security, recovery behavior and troubleshooting.</p>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Docker Watchdog Installation"><title>Installation | Docker Watchdog</title><link rel="stylesheet" href="style.css"></head><body><header><div class="inner"><small>DOCKER WATCHDOG / v1.3.0</small><h1>Installation</h1><p>Install on Debian/Ubuntu, RPM distributions and other compatible Linux hosts.</p><nav aria-label="Main navigation"><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="manual.html">Manual</a><a class="nav-cta" href="configurator.html">Label configurator</a><a href="https://github.com/bursh/docker-watchdog/releases">Releases</a><a href="https://github.com/bursh/docker-watchdog">GitHub</a></nav></div></header><main><section><h1 id="installation-guide">Installation guide</h1>
+<h2 id="requirements">Requirements</h2>
+<p>Linux with systemd, Python 3.7 or newer, CA certificates, local
+Docker Engine and Docker Compose V2. Install Docker according to the
+instructions for your distribution in the <a
+href="https://docs.docker.com/engine/install/">Docker documentation</a>.
+Verify <code>docker info</code> and <code>docker compose version</code>
+as the service user (root). Do not install a second conflicting Docker
+distribution.</p>
+<p>The packages contain the Python executable, a systemd unit, a
+commented configuration, man page and documentation. They deliberately
+do not install Docker Engine or Compose as dependencies. Before
+production use, test the package and recovery modes in a disposable
+Linux environment.</p>
+<h2 id="debian-and-ubuntu-including-compatible-arm64-systems">Debian and
+Ubuntu (including compatible ARM64 systems)</h2>
+<p>Download the desired <code>.deb</code> and <code>SHA256SUMS</code>
+from <a href="https://github.com/bursh/docker-watchdog/releases">GitHub
+Releases</a> when available. If checksums list both formats, download
+both files or check only the matching entry. For example:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&#39;docker-watchdog_1.3.0-1_all.deb$&#39;</span> SHA256SUMS <span class="kw">|</span> <span class="fu">sha256sum</span> <span class="at">-c</span> <span class="at">-</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> apt install ./docker-watchdog_1.3.0-1_all.deb</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl status docker-watchdog</span></code></pre></div>
+<p>The package is architecture-independent. Raspberry Pi OS 64-bit is a
+candidate, not a tested platform. Build from the tagged source using
+<code>bash build-deb.sh</code> with Python and <code>dpkg-deb</code>
+installed, if an asset is not available. The DEB is unsigned; checksums
+detect corruption, not a compromised publisher.</p>
+<h2 id="fedora-rhel-family-amazon-linux-and-opensuse">Fedora,
+RHEL-family, Amazon Linux and openSUSE</h2>
+<p>The new RPM uses <code>noarch</code> and targets compatible
+systemd/Python hosts. It is intended for Fedora, RHEL, Rocky Linux,
+AlmaLinux and Amazon Linux 2023. openSUSE is a compatibility candidate.
+Availability of dependencies, install behavior, and recovery must be
+validated per distribution; these are not all established supported
+platforms.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fedora / RHEL / Rocky / AlmaLinux / Amazon Linux 2023</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Obtain the RPM and matching SHA256SUMS from a published release.</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&#39;docker-watchdog-1.3.0-1.noarch.rpm$&#39;</span> SHA256SUMS <span class="kw">|</span> <span class="fu">sha256sum</span> <span class="at">-c</span> <span class="at">-</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> dnf install ./docker-watchdog-1.3.0-1.noarch.rpm</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl status docker-watchdog</span></code></pre></div>
+<p>For openSUSE, use
+<code>sudo zypper install ./docker-watchdog-1.3.0-1.noarch.rpm</code>
+after checking compatibility. Do not disable signature checks globally.
+Published standalone packages may be unsigned; a signed repository is
+preferable. The first installation enables the service when systemd is
+running. If Docker is not ready, start the watchdog after Docker is
+configured.</p>
+<p>Build your own RPM from source on a compatible build host:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Fedora or RHEL-family build host</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> dnf install rpm-build python3</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Alternatively on Debian/Ubuntu: sudo apt install rpm python3</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> build-rpm.sh</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="ex">rpm</span> <span class="at">-qp</span> <span class="at">--qf</span> <span class="st">&#39;%{NAME} %{VERSION}-%{RELEASE} %{ARCH}\n&#39;</span> dist/<span class="pp">*</span>.rpm</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">rpm</span> <span class="at">-K</span> <span class="at">--nosignature</span> dist/<span class="pp">*</span>.rpm</span></code></pre></div>
+<p>The GitHub CI workflow builds the RPM and includes a Fedora container
+installation/removal smoke test. Check the actual CI result for the
+release; this does not prove systemd recovery on every RPM
+distribution.</p>
+<h2 id="manual-installation-including-arch-linux">Manual installation
+(including Arch Linux)</h2>
+<p>Install Python 3, CA certificates, Git and man tooling with your
+distribution's package manager. Docker Engine and Compose V2 must
+already work. Use the following only on a compatible systemd host.
+Verify the release source or use an audited local checkout.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/bursh/docker-watchdog.git</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> docker-watchdog</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> checkout v1.3.0</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> install <span class="at">-m</span> 0755 watchdog.py /usr/local/bin/docker-watchdog</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> install <span class="at">-d</span> <span class="at">-m</span> 0755 /etc/docker-watchdog</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> test <span class="at">-e</span> /etc/docker-watchdog/watchdog.conf <span class="kw">||</span> <span class="fu">sudo</span> install <span class="at">-m</span> 0644 watchdog.conf /etc/docker-watchdog/watchdog.conf</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> install <span class="at">-d</span> <span class="at">-m</span> 0755 /usr/local/share/man/man1</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> install <span class="at">-m</span> 0644 docs/docker-watchdog.1 /usr/local/share/man/man1/docker-watchdog.1</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="fu">sed</span> <span class="st">&#39;s|ExecStart=/usr/bin/docker-watchdog|ExecStart=/usr/local/bin/docker-watchdog|&#39;</span> docker-watchdog.service <span class="kw">|</span> <span class="fu">sudo</span> tee /etc/systemd/system/docker-watchdog.service <span class="op">&gt;</span>/dev/null</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl daemon-reload</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl enable <span class="at">--now</span> docker-watchdog</span></code></pre></div>
+<p>For manual upgrades, stop the service, replace
+executable/unit/manual, preserve configuration/state, reload systemd and
+start again. For manual removal, disable and stop the service, remove
+the executable, unit and manual, then reload systemd. Keep
+<code>/etc/docker-watchdog</code> and
+<code>/var/lib/docker-watchdog</code> unless deliberately deleting
+configuration/history. Remove a manual unit override before migrating to
+a package.</p>
+<h2 id="upgrade-from-v1.2.x">Upgrade from v1.2.x</h2>
+<p>Before upgrading a production host, pause affected projects or stop
+the watchdog and back up configuration/state. Stopping the service
+prevents its automated recovery; it does not stop Docker or the
+application containers.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl stop docker-watchdog</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> tar <span class="at">-czf</span> docker-watchdog-pre-1.3.0.tar.gz <span class="at">-C</span> / etc/docker-watchdog var/lib/docker-watchdog</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="co"># install the new local DEB or RPM using your package manager</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> systemctl start docker-watchdog</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="ex">docker-watchdog</span> <span class="at">--version</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="ex">docker-watchdog</span> <span class="at">--status</span></span></code></pre></div>
+<p>The DEB conffile may prompt for local changes; the RPM uses
+<code>%config(noreplace)</code> and may create <code>.rpmnew</code>.
+Compare and merge the new options rather than overwriting production
+settings. The full template is installed at
+<code>/usr/share/doc/docker-watchdog/watchdog.conf.example</code>.
+Existing project history, rate counters, pauses and pending-up state
+migrate; new per-container counters start afresh. New state contains a
+<code>targets</code> field unknown to v1.2.x. For rollback, stop the
+service, downgrade the executable/package, and restore a compatible
+pre-upgrade state backup; this loses attempts recorded after the backup.
+Never resume a stale pending recovery blindly.</p>
+<h2 id="staging-signed-apt-and-yumdnf-repositories">Staging signed APT
+and YUM/DNF repositories</h2>
+<p>The repository scripts create local repository directories; they do
+not deploy a website or manage your private keys. Use an
+administrator-controlled signing key and verify its fingerprint out of
+band.</p>
+<p>APT: install <code>dpkg-dev apt-utils gnupg</code> on a trusted build
+host. Run
+<code>./publish-apt.sh /path/to/staging/apt KEY_ID dist/*.deb</code>.
+Publish the generated repository over HTTPS. Export the public key into
+<code>/etc/apt/keyrings/docker-watchdog.asc</code>, then configure an
+APT source:</p>
+<pre class="text"><code>deb [signed-by=/etc/apt/keyrings/docker-watchdog.asc] https://YOUR-HOST/apt/ ./</code></pre>
+<p>Run <code>sudo apt update</code> and
+<code>sudo apt install docker-watchdog</code>. Do not publish the
+private key.</p>
+<p>YUM/DNF: install <code>createrepo_c</code>, <code>rpm-sign</code> (or
+the distribution's RPM signing tool), <code>rpm</code> and
+<code>gnupg</code>. Stage a new directory with all desired package
+versions:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="ex">./publish-rpm.sh</span> /path/to/new-rpm-repo KEY_ID dist/<span class="pp">*</span>.rpm</span></code></pre></div>
+<p>The script signs copies of the RPMs, generates <code>repodata</code>,
+signs <code>repomd.xml</code>, and exports the public key. Review and
+verify package and repository signatures before publishing the staged
+directory atomically over HTTPS. The original build artifacts are not
+modified. On clients, after verifying the public key fingerprint,
+configure <code>/etc/yum.repos.d/docker-watchdog.repo</code>:</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">[docker-watchdog]</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="dt">name</span><span class="ot">=</span><span class="st">Docker Watchdog</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="dt">baseurl</span><span class="ot">=</span><span class="st">https://YOUR-HOST/rpm/</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="dt">enabled</span><span class="ot">=</span><span class="dv">1</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="dt">gpgcheck</span><span class="ot">=</span><span class="dv">1</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="dt">repo_gpgcheck</span><span class="ot">=</span><span class="dv">1</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="dt">gpgkey</span><span class="ot">=</span><span class="st">https://YOUR-HOST/rpm/RPM-GPG-KEY-docker-watchdog</span></span></code></pre></div>
+<p>Run <code>sudo dnf makecache</code> and
+<code>sudo dnf install docker-watchdog</code>. No signing key,
+repository hosting or publication credentials are supplied. Signing and
+client repository validation must be tested with your RPM/GPG
+versions.</p>
+<h2 id="first-project-and-verification">First project and
+verification</h2>
+<p>Add <code>watchdog.enabled: "true"</code> to each monitored Compose
+service. For HTTP or both checks, publish exactly one distinct TCP port
+per monitored container. Healthcheck-only targets need no host port. Use
+the <a href="configurator.html">label configurator</a> to generate
+options or consult the <a href="manual.html">manual</a>. Apply
+with <code>docker compose up -d</code> and run:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker-watchdog <span class="at">--list</span> <span class="at">--table</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> docker-watchdog <span class="at">--status</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sudo</span> journalctl <span class="at">-u</span> docker-watchdog <span class="at">--since</span> <span class="st">&#39;24 hours ago&#39;</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">man</span> docker-watchdog</span></code></pre></div>
+<p>For safe testing, stop the installed daemon before running
+<code>sudo docker-watchdog --dry-run</code>; otherwise the real daemon
+can still perform recovery. Use <code>--pause PROJECT</code> before
+planned changes and <code>--resume PROJECT</code> afterward.</p>
+<h2 id="unsupported-or-unvalidated-targets">Unsupported or unvalidated
+targets</h2>
+<p>Native Windows and macOS are not supported. Containerized Watchdog,
+Docker Desktop, rootless Docker, WSL, remote Docker contexts and
+non-systemd service management have not been validated. Use a dedicated
+Linux VM with a locally running Docker Engine if appropriate.</p>
 </section></main><footer>Docker Watchdog · Apache-2.0 · <a href="https://github.com/bursh/docker-watchdog/issues">Issues and feedback</a></footer></body></html>
