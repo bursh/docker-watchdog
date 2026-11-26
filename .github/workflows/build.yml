@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - run: python3 -m unittest -v
@@ -25,8 +25,8 @@ jobs:
           rpm -qp --scripts dist/*.rpm
       - name: RPM install and removal smoke test on Fedora
         run: |
-          docker run --rm -v "$PWD/dist:/artifacts:ro" fedora:latest sh -ec '
-            dnf -y install /artifacts/*.rpm
+          docker run --rm -v "$PWD/dist:/artifacts:ro" fedora:45 sh -exc '
+            dnf -y --setopt=tsflags= install /artifacts/*.rpm
             docker-watchdog --version
             test -f /usr/lib/systemd/system/docker-watchdog.service
             test -f /etc/docker-watchdog/watchdog.conf
