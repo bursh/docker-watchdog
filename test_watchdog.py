@@ -19,7 +19,7 @@ class WatchdogTests(unittest.TestCase):
             'State': {'Running': True}, 'HostConfig': {'PortBindings': {'80/tcp': [{'HostPort': '0'}]}},
             'NetworkSettings': {'Ports': {'80/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '12345'}]}}}
     def tick(self):
-        state = self.store.load('p'); state.next_check = 0; self.store.save('p', state)
+        state = self.store.load('p'); state.next_check = 0; [t.update(next_check=0) for t in state.targets.values()]; self.store.save('p', state)
         w.check('p', [self.c], self.store, self.cfg)
     def test_port(self):
         self.assertEqual(w.target([self.c])[-1], {('127.0.0.1',12345)})
