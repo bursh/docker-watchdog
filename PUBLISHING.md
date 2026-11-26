@@ -1,29 +1,43 @@
-# Publishing this repository
+# Publishing Docker Watchdog
 
-The five version tags are source snapshots imported in sequence; the initial GitHub commit is preserved exactly. No historical commit timestamps were invented. `main` includes a subsequent documentation and automation commit.
+The initial GitHub commit is preserved exactly, followed by five original release snapshot imports (v1.0.0 through v1.2.2). The new v1.3.0 changes are normal development commits. No historical commit timestamps were invented. Do not move or delete published tags.
 
-From the extracted directory (including `.git`):
+## Push the development branch and open a PR
+
+The main branch is protected by a ruleset and requires the `build` CI check. From the extracted directory (including `.git`), use your own Git credentials:
 
 ```sh
 git remote -v
 git fetch origin
-git merge-base --is-ancestor origin/main main
-git push -u origin main
-git push origin --tags
+git log --oneline --decorate --graph --all
+git merge-base --is-ancestor origin/main HEAD \
+  && git push -u origin HEAD:refs/heads/release/v1.3.0
 ```
 
-If the ancestor check fails, stop and inspect the remote changes; do not force push. The origin URL is https://github.com/bursh/docker-watchdog.git. Use your own Git credentials. Configure your Git identity before future commits.
+If the ancestor check fails, inspect changes and integrate the remote branch without a force push before pushing. Open a pull request from `release/v1.3.0` to `main`. Review all changes, ensure CI (including RPM build/install smoke test and Docker integration tests) passes, then use squash or rebase merge according to the branch ruleset. Verify the merged revision has the intended version and files.
 
-## Pages
+## Tag and release
 
-In repository Settings > Pages, select **Deploy from a branch**, then **main** and **/docs**. Save. The static site needs no Jekyll build; `docs/.nojekyll` is included. Expected URL: https://bursh.github.io/docker-watchdog/. Check the Pages deployment status. If desired, preview locally with `python3 -m http.server --directory docs 8000`.
+After merging, tag the verified merged main commit; the new immutable tag is intentionally not included in the prepared branch archive.
 
-## Releases
+```sh
+git fetch origin
+git log -1 --oneline origin/main
+git show origin/main:watchdog.py | grep '^VERSION = '
+git tag -a v1.3.0 origin/main -m 'Docker Watchdog v1.3.0'
+git push origin v1.3.0
+```
 
-The Git tags do not themselves create GitHub Release objects. Use Actions > Publish release > Run workflow on main, enter an existing tag (v1.1.0 or later). The workflow builds the tagged source, validates package version, generates SHA256SUMS and creates a draft release. Review tests, changelog and assets before publishing. For v1.0.0, which has no source package build script, attach the original historical DEB and checksum manually. Alternatively upload the original DEB assets supplied separately, after verifying checksums. Do not overwrite published releases silently.
+Do not overwrite an existing version tag. Use Actions > Publish release > Run workflow on main and select the existing tag `v1.3.0`. The workflow tests the tagged source, builds DEB and RPM, validates metadata, generates SHA256SUMS, and creates a draft GitHub Release. Review the generated assets, actual CI results and changelog before publishing. Historical tags may only support DEB; v1.0.0 has no original source build script. Do not overwrite published releases silently. The current release artifact is unsigned until separately signed or distributed through a trusted signed repository.
 
-The existing CI workflow tests and builds on an isolated GitHub runner. Check its first successful run before publishing. Enable private vulnerability reporting, Dependabot alerts and a branch protection/ruleset requiring CI and reviews where appropriate. Set repository description, topics (docker, docker-compose, watchdog, self-healing, systemd, monitoring), and website to the Pages URL. No GitHub settings were modified during local preparation.
+## GitHub Pages
 
-## APT
+Pages uses main `/docs` (Deploy from a branch), with `.nojekyll`. After merge, check the Pages deployment and visit https://bursh.github.io/docker-watchdog/ and https://bursh.github.io/docker-watchdog/configurator.html. The configurator is a static HTML/JS page with no backend, telemetry or external libraries. Preview locally:
 
-`publish-apt.sh` generates a signed APT repository when supplied with a signing key and DEBs. Do not publish the private key. No APT hosting or signing key is included. See `docs/usage.md` for details.
+```sh
+python3 -m http.server --directory docs 8000
+```
+
+## Signed repositories
+
+`publish-apt.sh` stages a signed APT repository; `publish-rpm.sh` stages signed RPM packages and metadata for a YUM/DNF repository. Both require your own signing key and hosting. See [installation](docs/install.md). Do not publish private keys or deployment credentials.
